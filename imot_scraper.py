@@ -16,11 +16,6 @@ import os
 import sys
 from pathlib import Path
 
-# ================= GitHub Actions Environment =================
-if os.getenv("GITHUB_ACTIONS"):
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/tmp/ms-playwright"
-    print("Running in GitHub Actions environment")
-
 # ================= LOGGING SETUP =================
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -917,7 +912,10 @@ sections.forEach(s => observer.observe(s));
 # ================= SCRAPING =================
 with sync_playwright() as p:
     logger.info("Opening browser (headless)…")
-    browser = p.chromium.launch(headless=True)
+    browser = p.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"]
+    )
     page    = browser.new_page()
     page.set_extra_http_headers({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
