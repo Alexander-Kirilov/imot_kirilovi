@@ -47,7 +47,7 @@ jobs:
 
       - name: Run scraper
         env:
-          PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
+          PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python imot_scraper.py
 
