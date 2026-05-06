@@ -4,6 +4,8 @@ import logging
 import time
 import random
 import smtplib
+import requests
+import hashlib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -34,7 +36,9 @@ logger.info("=== Starting imot.bg scraper ===")
 # ================= PATHS & CONFIG =================
 HISTORY_FILE = "all_listings_history.parquet"
 HTML_OUTPUT  = Path("docs/index.html")   # GitHub Pages serves from /docs
+IMAGES_DIR   = Path("docs/images")       # Downloaded listing images
 HTML_OUTPUT.parent.mkdir(exist_ok=True)
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 TODAY     = datetime.now().strftime("%Y-%m-%d")
 NOW_STR   = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -52,8 +56,7 @@ RECEIVERS       = ["a.kirilov74@gmail.com", "hristina.padeva@gmail.com"]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
 base_url = (
-    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/darvenitsa/tristaen'
-    '?type_home=4~5~&kv_min=85&price_max=280000&raioni=44~45~46~47~48~49~&ybuild_type=1~&fe1=1'
+    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=85&price_max=280000&ybuild_type=1'
 )
 
 listings = []
@@ -70,10 +73,11 @@ COL_YEAR            = 'Year_built'
 COL_INFO            = 'Info'
 COL_TITLE           = 'Title'
 COL_SCRAPED_DATE    = 'Scraped_Date'
-COL_FIRST_SEEN      = 'First_Seen_Date'   # ← NEW: date when listing first appeared
+COL_FIRST_SEEN      = 'First_Seen_Date'
 COL_PRICE_HISTORY   = 'Price_History'
 COL_SOLD            = 'Sold'
 COL_SITE_PRICE_HISTORY = 'Site price history'
+COL_IMAGES          = 'Image_Paths'   # comma-separated relative paths
 
 
 # ================= HELPERS =================
@@ -179,9 +183,10 @@ def parse_page(html, page_num=None):
                 COL_INFO:               info_text,
                 COL_LINK:               href,
                 COL_SCRAPED_DATE:       TODAY,
-                COL_FIRST_SEEN:         TODAY,   # will be overridden for existing
+                COL_FIRST_SEEN:         TODAY,
                 COL_PRICE_HISTORY:      "",
                 COL_SITE_PRICE_HISTORY: "",
+                COL_IMAGES:             "",
             })
             count += 1
         except Exception as e:
@@ -332,13 +337,102 @@ def parse_site_price_history_html(html):
     return " | ".join(entries)
 
 
+# ================= IMAGE DOWNLOAD =================
+
+def listing_id(url):
+    """Кратък уникален ID от URL-а на обявата."""
+    return hashlib.md5(url.encode()).hexdigest()[:12]
+
+
+def download_images(url, page_html, max_images=2):
+    """
+    Свали първите max_images снимки от HTML-а на страницата.
+    Записва ги в docs/images/{id}/1.jpg, 2.jpg
+    Връща comma-separated relative paths (спрямо docs/).
+    """
+    lid     = listing_id(url)
+    img_dir = IMAGES_DIR / lid
+
+    # Ако снимките вече са свалени — не свалявай отново
+    if img_dir.exists():
+        existing = sorted(img_dir.glob("*.jpg"))
+        if len(existing) >= max_images:
+            return ",".join(
+                str(p).replace("\\", "/").replace("docs/", "")
+                for p in existing[:max_images]
+            )
+
+    try:
+        soup = BeautifulSoup(page_html, 'html.parser')
+
+        # Опитваме различни селектори — imot.bg ги слага по различен начин
+        imgs = (
+            soup.select('#pics img') or
+            soup.select('div.photos img') or
+            soup.select('div.gallery img') or
+            soup.select('div#photoGallery img') or
+            soup.find_all('img', src=re.compile(r'\.(jpg|jpeg|png)', re.I))
+        )
+
+        SKIP_KEYWORDS = ['logo', 'icon', 'banner', 'avatar', 'sprite', 'pixel', 'blank']
+        srcs = []
+        for img in imgs:
+            src = img.get('src') or img.get('data-src') or img.get('data-original') or ''
+            if not src:
+                continue
+            if any(kw in src.lower() for kw in SKIP_KEYWORDS):
+                continue
+            if src.startswith('//'): src = 'https:' + src
+            elif src.startswith('/'): src = 'https://www.imot.bg' + src
+            if src.startswith('http'):
+                srcs.append(src)
+            if len(srcs) >= max_images:
+                break
+
+        if not srcs:
+            logger.debug(f"No images found for {url}")
+            return ""
+
+        img_dir.mkdir(parents=True, exist_ok=True)
+        saved = []
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        }
+        for i, src in enumerate(srcs[:max_images], start=1):
+            try:
+                r = requests.get(src, timeout=10, headers=headers)
+                if r.status_code == 200:
+                    path = img_dir / f"{i}.jpg"
+                    path.write_bytes(r.content)
+                    # Relative path за HTML (спрямо docs/)
+                    rel = f"images/{lid}/{i}.jpg"
+                    saved.append(rel)
+                    logger.debug(f"Downloaded image {i} for {url}")
+            except Exception as ex:
+                logger.debug(f"Image {i} download failed for {url}: {ex}")
+
+        return ",".join(saved)
+
+    except Exception as e:
+        logger.warning(f"Image download error for {url}: {e}")
+        return ""
+
+
+# ================= SELENIUM: PRICE HISTORY + IMAGES =================
+
 def scrape_site_price_histories_selenium(links):
-    histories = {url: "" for url in links}
-    if not links: return histories
+    """
+    Посещава всяка обява с Selenium.
+    Връща dict: {url: {"price_history": str, "images": str}}
+    """
+    result = {url: {"price_history": "", "images": ""} for url in links}
+    if not links:
+        return result
 
     total   = len(links)
     success = empty = failed = 0
-    logger.info(f"Fetching site price history for {total} listings")
+    logger.info(f"Fetching site price history + images for {total} listings")
 
     try:
         from selenium import webdriver
@@ -361,18 +455,20 @@ def scrape_site_price_histories_selenium(links):
         options.add_experimental_option("useAutomationExtension", False)
         driver = webdriver.Chrome(options=options)
     except Exception:
-        logger.warning("Selenium init failed; skipping site price histories")
-        return histories
+        logger.warning("Selenium init failed; skipping site price histories and images")
+        return result
 
     try:
         wait = WebDriverWait(driver, 12)
         for idx, url in enumerate(links, start=1):
-            logger.info(f"Site price history [{idx}/{total}]: {url}")
+            logger.info(f"Site price history + images [{idx}/{total}]: {url}")
             try:
                 driver.get(url)
                 price_history_elem = wait.until(
                     EC.presence_of_element_located((By.ID, "priceHistory2"))
                 )
+
+                # ── Price history ──────────────────────────────────────────
                 try:
                     title_span = price_history_elem.find_element(
                         By.CSS_SELECTOR, 'div.title span[onclick*="showpricechange"]'
@@ -394,15 +490,26 @@ def scrape_site_price_histories_selenium(links):
                         time.sleep(1)
                 except Exception:
                     pass
-                html = driver.page_source
-                histories[url] = parse_site_price_history_html(html)
-                if histories[url].strip(): success += 1
-                else: empty += 1
+
+                page_html = driver.page_source
+                price_hist = parse_site_price_history_html(page_html)
+                result[url]["price_history"] = price_hist
+                if price_hist.strip():
+                    success += 1
+                else:
+                    empty += 1
+
+                # ── Images ────────────────────────────────────────────────
+                img_paths = download_images(url, page_html)
+                result[url]["images"] = img_paths
+                if img_paths:
+                    logger.info(f"  → {len(img_paths.split(','))} image(s) saved")
+
             except Exception:
                 failed += 1
-                histories[url] = ""
+
         logger.info(f"Site price history: total={total}, ok={success}, empty={empty}, failed={failed}")
-        return histories
+        return result
     finally:
         driver.quit()
 
@@ -422,9 +529,25 @@ def _link_cell(url):
     if not url or pd.isna(url): return "—"
     return f'<a href="{url}" target="_blank" rel="noopener">🔗 Виж</a>'
 
+def _img_cell(paths_str):
+    """Показва до 2 thumbnail-а от запазените снимки."""
+    if not paths_str or pd.isna(paths_str) or str(paths_str).strip() == "":
+        return "—"
+    html_parts = []
+    for p in str(paths_str).split(",")[:2]:
+        p = p.strip()
+        if p:
+            html_parts.append(
+                f'<img src="{p}" '
+                f'style="width:72px;height:54px;object-fit:cover;'
+                f'border-radius:4px;margin-right:4px;cursor:pointer" '
+                f'onclick="window.open(this.src)" '
+                f'onerror="this.style.display=\'none\'">'
+            )
+    return "".join(html_parts) if html_parts else "—"
+
 
 def _build_rows(df, cols):
-    """Build <tr> rows for given columns."""
     rows_html = []
     for _, row in df.iterrows():
         cells = []
@@ -438,6 +561,8 @@ def _build_rows(df, cols):
                 cells.append(f"<td>{_fmt_size(val)}</td>")
             elif c == COL_PRICE_PER_SQM:
                 cells.append(f"<td>{_fmt_pm2(val)}</td>")
+            elif c == COL_IMAGES:
+                cells.append(f"<td>{_img_cell(val)}</td>")
             elif c == 'Price_EUR_old':
                 cells.append(f"<td class='old-price'>{_fmt_price(val)}</td>")
             else:
@@ -464,13 +589,11 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     # ── Derive sections ───────────────────────────────────────────────────────
     df_active = df_all[~df_all[COL_SOLD].fillna(False)].copy() if not df_all.empty else pd.DataFrame()
 
-    # New in last 10 days: first_seen >= cutoff
     if COL_FIRST_SEEN in df_all.columns and not df_all.empty:
         df_new10 = df_active[df_active[COL_FIRST_SEEN].fillna("") >= cutoff].copy()
     else:
         df_new10 = df_active[df_active[COL_SCRAPED_DATE].fillna("") >= cutoff].copy()
 
-    # Price changes in last 10 days: has " → " in price_history AND scraped recently
     if not df_active.empty and COL_PRICE_HISTORY in df_active.columns:
         mask_changed = (
             df_active[COL_PRICE_HISTORY].fillna("").str.contains(" → ") &
@@ -480,16 +603,13 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     else:
         df_changed10 = pd.DataFrame()
 
-    # Sold: all sold listings
     df_sold = df_all[df_all[COL_SOLD].fillna(False)].copy() if not df_all.empty else pd.DataFrame()
 
-    # Stats
     n_total   = len(df_active)
     n_new10   = len(df_new10)
     n_changed = len(df_changed10)
     n_sold    = len(df_sold)
 
-    # Sort all active by scraped date desc
     if not df_active.empty:
         df_active = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
     if not df_new10.empty:
@@ -497,32 +617,32 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     if not df_changed10.empty:
         df_changed10 = df_changed10.sort_values(COL_SCRAPED_DATE, ascending=False)
 
-    # ── Build table HTML ──────────────────────────────────────────────────────
+    # ── Build tables (with images column) ────────────────────────────────────
     new_table = _table(
         df_new10,
-        [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година", "История (сайт)", ""],
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година", "История (сайт)", ""],
         css_id="new-table",
     )
 
     changed_table = _table(
         df_changed10,
-        [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Локация", "Текуща цена", "Площ", "€/m²", "История на цената", "История (сайт)", ""],
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Текуща цена", "Площ", "€/m²", "История на цената", "История (сайт)", ""],
         css_id="changed-table",
     )
 
     all_table = _table(
         df_active,
-        [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_LINK],
-        ["Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.", "Последно виждана", "История на цената", ""],
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.", "Последно виждана", "История на цената", ""],
         css_id="all-table",
     )
 
     sold_table = _table(
         df_sold,
-        [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_LINK],
-        ["Локация", "Последна цена", "Площ", "€/m²", "Последно виждана", "История на цената", ""],
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Последна цена", "Площ", "€/m²", "Последно виждана", "История на цената", ""],
         css_id="sold-table",
         extra_class="sold-table",
     )
@@ -533,7 +653,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Сем. Кирилови</title>
+<title>Имоти сем. Кирилови</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
 <style>
@@ -719,7 +839,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
   table.data-table td {{
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
-    vertical-align: top;
+    vertical-align: middle;
     max-width: 280px;
     word-break: break-word;
   }}
@@ -733,6 +853,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 
   table.sold-table td {{ color: var(--muted); }}
   table.sold-table td a {{ color: var(--muted); }}
+  table.sold-table img {{ opacity: 0.5; }}
 
   table.data-table a {{
     color: var(--accent);
@@ -747,6 +868,16 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     font-family: var(--mono);
     font-size: 11px;
     color: var(--muted);
+  }}
+
+  /* thumbnail images */
+  table.data-table td img {{
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    transition: transform 0.15s;
+  }}
+  table.data-table td img:hover {{
+    transform: scale(1.06);
   }}
 
   .empty-note {{
@@ -777,7 +908,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 <body>
 
 <header>
-  <h1>🏠 Имоти · <span>сем. Кирилови</span></h1>
+  <h1>🏠 Имоти · <span>сем Кирилови</span></h1>
   <span class="updated">Обновено: {now_str}</span>
 </header>
 
@@ -980,8 +1111,14 @@ if not listings:
 df_new      = pd.DataFrame(listings)
 df_sold_now = pd.DataFrame()
 
-site_histories = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist())
-df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(site_histories)
+# Selenium: price history + images
+selenium_results = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist())
+df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("price_history", "")
+)
+df_new[COL_IMAGES] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("images", "")
+)
 
 # Load history
 df_history = pd.DataFrame()
@@ -1000,6 +1137,7 @@ if not df_history.empty:
         (COL_SITE_PRICE_HISTORY, ""),
         (COL_SOLD, False),
         (COL_FIRST_SEEN, ""),
+        (COL_IMAGES, ""),
     ]:
         if col not in df_history.columns:
             df_history[col] = default
@@ -1012,6 +1150,7 @@ if not df_all.empty:
         (COL_SOLD, False),
         (COL_SITE_PRICE_HISTORY, ""),
         (COL_FIRST_SEEN, ""),
+        (COL_IMAGES, ""),
     ]:
         if col not in df_all.columns:
             df_all[col] = default
@@ -1077,6 +1216,11 @@ for _, row in df_new.iterrows():
         # Preserve first_seen date
         row_dict[COL_FIRST_SEEN] = df_all.at[link, COL_FIRST_SEEN] or old_scraped_date
 
+        # Preserve images if already downloaded
+        existing_images = df_all.at[link, COL_IMAGES] if COL_IMAGES in df_all.columns else ""
+        if existing_images and not row_dict.get(COL_IMAGES):
+            row_dict[COL_IMAGES] = existing_images
+
         for col in df_all.columns:
             if col in row_dict and col != COL_PRICE_HISTORY and col != COL_FIRST_SEEN:
                 df_all.at[link, col] = row_dict[col]
@@ -1097,7 +1241,7 @@ for _, row in df_new.iterrows():
         if pd.notna(row_dict.get(COL_PRICE)):
             row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
         row_dict[COL_SOLD]       = False
-        row_dict[COL_FIRST_SEEN] = TODAY   # ← mark when first seen
+        row_dict[COL_FIRST_SEEN] = TODAY
         df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
 
 # Detect sold
@@ -1148,6 +1292,7 @@ df_export = df_export.rename(columns={
     COL_FLOOR:              'Floor',
     COL_TOTAL_FLOORS:       'Total Floors',
     COL_YEAR:               'Year Built',
+    COL_IMAGES:             'Image Paths',
 })
 df_export.to_excel(excel_file, index=False, engine='openpyxl')
 
@@ -1228,12 +1373,14 @@ a{color:#4f9cf9;text-decoration:none}
 
     if not df_changed.empty:
         d = df_changed.copy()
-        # Ensure price per sqm exists and is numeric
         if COL_PRICE_PER_SQM not in d.columns and f'{COL_PRICE_PER_SQM}_new' in d.columns:
             d = d.rename(columns={f'{COL_PRICE_PER_SQM}_new': COL_PRICE_PER_SQM})
-
         if COL_PRICE in d.columns and COL_SIZE in d.columns and COL_PRICE_PER_SQM not in d.columns:
             d[COL_PRICE_PER_SQM] = (d[COL_PRICE] / d[COL_SIZE]).round(2)
+        tbl = to_html_table(d,
+            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_LINK],
+            ["Локация", "Нова цена", "Площ", "€/m²", "История на цената", ""])
+        changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_sold_now.empty:
         tbl = to_html_table(df_sold_now,
@@ -1251,7 +1398,7 @@ a{color:#4f9cf9;text-decoration:none}
     html_content = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
 <div class="wrap">
   <div class="hdr">
-    <h1>Бъдещият дом!</h1>
+    <h1>🏠 Имоти сем. Кирилови</h1>
     <p>Автоматичен отчет · {NOW_STR}</p>
   </div>
   <div class="body">
