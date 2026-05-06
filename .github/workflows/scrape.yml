@@ -53,6 +53,14 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python imot_scraper.py
 
+      # ← ДОБАВИ ТАЗИ СТЪПКА
+      - name: Debug - check files
+        run: |
+          echo "=== docs folder ==="
+          ls -la docs/ || echo "ГРЕШКА: docs папката не съществува"
+          echo "=== git status ==="
+          git status
+
       - name: Commit & Push results
         run: |
           git config user.name "github-actions[bot]"
