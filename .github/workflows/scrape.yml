@@ -24,8 +24,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # === Playwright Fix (работи на Ubuntu 24.04) ===
-      - name: Cache Playwright browsers
+      # === Playwright Setup ===
+      - name: Cache Playwright
         uses: actions/cache@v4
         id: playwright-cache
         with:
@@ -38,28 +38,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libnss3 \
-            libatk-bridge2.0-0 \
-            libdrm2 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxrandr2 \
-            libgbm1 \
-            libxkbcommon0 \
-            libasound2t64 \
-            libatspi2.0-0 \
-            libgtk-3-0t64 \
-            libxshmfence1 \
-            fonts-liberation
+            libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxdamage1 \
+            libxrandr2 libgbm1 libxkbcommon0 libasound2t64 libatspi2.0-0 \
+            libgtk-3-0t64 libxshmfence1 fonts-liberation
 
       - name: Install Playwright Browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: python -m playwright install chromium
+        run: python -m playwright install chromium --with-deps
 
       - name: Run scraper
         env:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
         run: python imot_scraper.py
 
       - name: Commit & Push results
