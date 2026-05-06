@@ -1,0 +1,46 @@
+name: Imot.bg Scraper
+
+on:
+  schedule:
+    - cron: '0 4 * * *'    # 07:00 българско време (4 UTC)
+    - cron: '0 10 * * *'   # 13:00 българско време (10 UTC)
+  workflow_dispatch:       # позволява ръчно пускане
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl beautifulsoup4 playwright selenium webdriver-manager lxml
+
+      - name: Install Playwright browsers
+        run: python -m playwright install chromium --with-deps
+
+      - name: Run scraper
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python imot_scraper.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if [[ -n $(git status --porcelain) ]]; then
+            git add docs/index.html all_listings_history.parquet *.xlsx *.log
+            git commit -m "Автоматично обновяване: $(date +'%d.%m.%Y %H:%M')"
+            git push
+          else
+            echo "No changes to commit"
+          fi
