@@ -218,3 +218,32 @@
 2026-05-06 12:00:47,765 | INFO    | Excel saved: imot_bg_scraping_20260506_1151.xlsx
 2026-05-06 12:00:47,765 | INFO    | No changes → email not sent
 2026-05-06 12:00:47,765 | INFO    | === Script finished ===
+2026-05-06 12:14:50,471 | INFO    | === Starting imot.bg scraper ===
+2026-05-06 12:14:50,741 | INFO    | Opening browser (headless)…
+2026-05-06 12:14:50,960 | INFO    | Loading first page: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=85&price_max=280000&ybuild_type=1
+2026-05-06 12:14:52,970 | INFO    | Total listings: 8
+2026-05-06 12:14:53,023 | INFO    | Scraped 8 listings from page 1
+2026-05-06 12:14:53,023 | INFO    | Planning to scrape up to 1 pages
+2026-05-06 12:14:53,023 | INFO    | Loading page 2: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen/p-2?type_home=4~5~&kv_min=85&price_max=280000&ybuild_type=1
+2026-05-06 12:15:05,343 | INFO    | No more listings on page 2
+2026-05-06 12:15:05,374 | INFO    | Browser closed
+2026-05-06 12:15:05,387 | INFO    | Fetching site price history + images for 8 listings
+2026-05-06 12:15:10,915 | INFO    | Site price history + images [1/8]: https://www.imot.bg/obiava-1c177399341083633-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:15:26,589 | INFO    | Site price history + images [2/8]: https://www.imot.bg/obiava-1c177547670610634-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:15:35,554 | INFO    |   → 2 image(s) saved
+2026-05-06 12:15:35,554 | INFO    | Site price history + images [3/8]: https://www.imot.bg/obiava-1c177305169639447-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:15:43,462 | INFO    |   → 2 image(s) saved
+2026-05-06 12:15:43,462 | INFO    | Site price history + images [4/8]: https://www.imot.bg/obiava-1c174639672082106-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:15:58,378 | INFO    | Site price history + images [5/8]: https://www.imot.bg/obiava-1c177451145026908-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:16:05,037 | INFO    |   → 2 image(s) saved
+2026-05-06 12:16:05,037 | INFO    | Site price history + images [6/8]: https://www.imot.bg/obiava-1c177045752902523-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:16:11,241 | INFO    |   → 2 image(s) saved
+2026-05-06 12:16:11,241 | INFO    | Site price history + images [7/8]: https://www.imot.bg/obiava-1c176432069391545-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-06 12:16:26,044 | INFO    | Site price history + images [8/8]: https://www.imot.bg/obiava-1c175154028520693-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-sveti-kipriyan
+2026-05-06 12:16:41,583 | INFO    | Site price history: total=8, ok=1, empty=3, failed=4
+2026-05-06 12:16:41,747 | INFO    | Loaded history: 69 rows
+2026-05-06 12:16:41,778 | INFO    | New: 0  |  Changed: 0  |  Sold: 61  |  Total unique: 69
+2026-05-06 12:16:41,798 | INFO    | HTML dashboard written to docs/index.html
+2026-05-06 12:16:41,920 | INFO    | Excel saved: imot_bg_scraping_20260506_1214.xlsx
+2026-05-06 12:16:43,908 | INFO    | ✔ Email sent
+2026-05-06 12:16:43,908 | INFO    | === Script finished ===
