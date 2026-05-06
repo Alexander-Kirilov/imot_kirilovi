@@ -1242,9 +1242,9 @@ a{color:#4f9cf9;text-decoration:none}
         sold_section = f"""<h3><span class="pill sld">ПРОДАДЕНИ</span> &nbsp;{len(df_sold_now)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     subject_parts = []
-    if df_new_only:   subject_parts.append(f"{len(df_new_only)} НОВИ")
-    if df_changed:    subject_parts.append(f"{len(df_changed)} ПРОМЯНА")
-    if df_sold_now:   subject_parts.append(f"{len(df_sold_now)} ПРОДАДЕНИ")
+    if not df_new_only.empty:   subject_parts.append(f"{len(df_new_only)} НОВИ")
+    if not df_changed.empty:    subject_parts.append(f"{len(df_changed)} ПРОМЯНА")
+    if not df_sold_now.empty:   subject_parts.append(f"{len(df_sold_now)} ПРОДАДЕНИ")
     subject = f"Имоти – {' · '.join(subject_parts)} – {TODAY}"
 
     html_content = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
