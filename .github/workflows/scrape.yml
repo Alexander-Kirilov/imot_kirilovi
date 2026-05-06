@@ -43,8 +43,7 @@ jobs:
             libgtk-3-0t64 libxshmfence1 fonts-liberation
 
       - name: Install Playwright Browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: python -m playwright install chromium --with-deps
+        run: python -m playwright install chromium
 
       - name: Run scraper
         env:
