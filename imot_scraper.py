@@ -52,7 +52,8 @@ RECEIVERS       = ["a.kirilov74@gmail.com", "hristina.padeva@gmail.com"]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
 base_url = (
-    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=85&price_max=280000&ybuild_type=1'
+    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/darvenitsa/tristaen'
+    '?type_home=4~5~&kv_min=85&price_max=280000&raioni=44~45~46~47~48~49~&ybuild_type=1~&fe1=1'
 )
 
 listings = []
@@ -532,7 +533,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Имоти Dashboard · Дървеница</title>
+<title>Сем. Кирилови</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
 <style>
@@ -776,7 +777,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 <body>
 
 <header>
-  <h1>🏠 Имоти · <span>Дървеница</span></h1>
+  <h1>🏠 Имоти · <span>сем. Кирилови</span></h1>
   <span class="updated">Обновено: {now_str}</span>
 </header>
 
@@ -1250,7 +1251,7 @@ a{color:#4f9cf9;text-decoration:none}
     html_content = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
 <div class="wrap">
   <div class="hdr">
-    <h1>git --version</h1>
+    <h1>Бъдещият дом!</h1>
     <p>Автоматичен отчет · {NOW_STR}</p>
   </div>
   <div class="body">
