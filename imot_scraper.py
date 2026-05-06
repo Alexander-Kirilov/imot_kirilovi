@@ -365,26 +365,14 @@ def download_images(url, page_html, max_images=2):
     try:
         soup = BeautifulSoup(page_html, 'html.parser')
 
-        # Опитваме различни селектори — imot.bg ги слага по различен начин
-        imgs = (
-            soup.select('#pics img') or
-            soup.select('div.photos img') or
-            soup.select('div.gallery img') or
-            soup.select('div#photoGallery img') or
-            soup.find_all('img', src=re.compile(r'\.(jpg|jpeg|png)', re.I))
-        )
+        # Реалните снимки на imot.bg са в img.carouselimg.owl-lazy
+        imgs = soup.select('img.carouselimg.owl-lazy')
 
-        SKIP_KEYWORDS = ['logo', 'icon', 'banner', 'avatar', 'sprite', 'pixel', 'blank']
         srcs = []
         for img in imgs:
-            src = img.get('src') or img.get('data-src') or img.get('data-original') or ''
-            if not src:
-                continue
-            if any(kw in src.lower() for kw in SKIP_KEYWORDS):
-                continue
-            if src.startswith('//'): src = 'https:' + src
-            elif src.startswith('/'): src = 'https://www.imot.bg' + src
-            if src.startswith('http'):
+            # Браузърът зарежда от src, но BeautifulSoup чете data-src преди lazy load
+            src = img.get('src') or img.get('data-src') or ''
+            if src and src.startswith('http'):
                 srcs.append(src)
             if len(srcs) >= max_images:
                 break
@@ -908,7 +896,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 <body>
 
 <header>
-  <h1>🏠 Имоти · <span>сем Кирилови</span></h1>
+  <h1>🏠 Имоти · <span>сем. Кирилови</span></h1>
   <span class="updated">Обновено: {now_str}</span>
 </header>
 
@@ -1398,7 +1386,7 @@ a{color:#4f9cf9;text-decoration:none}
     html_content = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
 <div class="wrap">
   <div class="hdr">
-    <h1>🏠 Имоти сем. Кирилови</h1>
+    <h1>🏠 Имоти · сем. Кирилови</h1>
     <p>Автоматичен отчет · {NOW_STR}</p>
   </div>
   <div class="body">
