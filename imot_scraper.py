@@ -50,7 +50,9 @@ excel_file = f"imot_bg_scraping_{timestamp}.xlsx"
 SMTP_SERVER     = "smtp.gmail.com"
 SMTP_PORT       = 587
 SENDER_EMAIL    = "a.kirilov74@gmail.com"
-SENDER_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "vawb lshb tqrw azrf")
+SENDER_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+if not SENDER_PASSWORD:
+    logger.error("GMAIL_APP_PASSWORD secret is not set!")
 RECEIVERS       = ["a.kirilov74@gmail.com", "hristina.padeva@gmail.com"]
 
 # ── Search URL ────────────────────────────────────────────────────────────────

@@ -2,13 +2,14 @@ name: Imot.bg Scraper
 
 on:
   schedule:
-    - cron: '0 4 * * *'    # 07:00 BG time
-    - cron: '0 10 * * *'   # 13:00 BG time
+    - cron: '0 4 * * *'    # 07:00 BG
+    - cron: '0 10 * * *'   # 13:00 BG
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -24,14 +25,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas openpyxl beautifulsoup4 playwright selenium webdriver-manager lxml
 
-      - name: Install Playwright browsers
+      - name: Install Playwright Chromium
         run: |
-          playwright install chromium --with-deps
-          playwright install-deps
+          python -m playwright install chromium --with-deps
+          python -m playwright install-deps
 
       - name: Run scraper
         env:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PLAYWRIGHT_BROWSERS_PATH: /tmp/ms-playwright
         run: python imot_scraper.py
 
       - name: Commit & Push results
