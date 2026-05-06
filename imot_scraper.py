@@ -52,7 +52,7 @@ RECEIVERS       = ["a.kirilov74@gmail.com", "hristina.padeva@gmail.com"]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
 base_url = (
-    'https://www.imot.bg/obiava-1d175698898201000-prodava-chetiristaen-apartament-grad-sofiya-mladost-4'
+    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=85&price_max=280000&ybuild_type=1'
 )
 
 listings = []
