@@ -484,16 +484,58 @@ def scrape_site_price_histories_selenium(links):
 
         # ================= PRICE HISTORY =================
         price_hist = ""
+
         if driver:
             try:
                 driver.get(url)
-                time.sleep(1.5)
+
+                # Изчакваме контейнера
+                price_history_elem = wait.until(
+                    EC.presence_of_element_located((By.ID, "priceHistory2"))
+                )
+
+                # imot.bg зарежда history-то чрез JS
+                try:
+                    title_span = price_history_elem.find_element(
+                        By.CSS_SELECTOR,
+                        'div.title span[onclick*="showpricechange"]',
+                    )
+
+                    onclick_attr = title_span.get_attribute("onclick") or ""
+
+                    start = onclick_attr.find("(") + 1
+                    end = onclick_attr.rfind(");")
+
+                    params_str = onclick_attr[start:end]
+                    params = [p.strip().strip("'") for p in params_str.split(",")]
+
+                    if len(params) >= 5:
+                        js_code = (
+                            f"showpricechange('{params[0]}','{params[1]}',"
+                            f"'{params[2]}','{params[3]}','{params[4]}');"
+                        )
+
+                        driver.execute_script(js_code)
+
+                        try:
+                            wait.until(
+                                EC.presence_of_element_located(
+                                    (By.TAG_NAME, "statistiki")
+                                )
+                            )
+                        except Exception as price_hist_err:
+                            logger.warning(f"... {price_hist_err}")
+
+                        time.sleep(1)
+
+                except Exception as js_err:
+                    logger.debug(f"showpricechange failed: {js_err}")
+
                 page_html = driver.page_source
                 price_hist = parse_site_price_history_html(page_html)
-            except Exception:
-                pass
 
-        result[url]["price_history"] = price_hist
+            except Exception as hist_err:
+                logger.warning(f"Price history error for {url}: {hist_err}")
 
         # ================= IMAGES (Playwright) =================
         img_paths = ""
