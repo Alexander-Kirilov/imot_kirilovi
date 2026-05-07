@@ -5,7 +5,6 @@ import time
 import random
 import smtplib
 import requests
-import hashlib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -15,7 +14,6 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import os
-import sys
 from pathlib import Path
 
 # ================= LOGGING SETUP =================
@@ -56,7 +54,8 @@ RECEIVERS       = ["a.kirilov74@gmail.com", "hristina.padeva@gmail.com"]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
 base_url = (
-    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=85&price_max=280000&ybuild_type=1'
+#    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=101&price_max=280000&ybuild_type=1'  1 имот за тестове
+    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/darvenitsa/tristaen?type_home=4~5~&kv_min=85&price_max=290000&raioni=44~45~46~47~48~&ybuild_type=1'
 )
 
 listings = []
@@ -112,8 +111,8 @@ def normalize_location(loc):
     return loc
 
 
-def parse_total_ads(html):
-    soup = BeautifulSoup(html, 'html.parser')
+def parse_total_ads(page_content):
+    soup = BeautifulSoup(page_content, 'html.parser')
     text = soup.get_text(separator=' ', strip=True)
     m = re.search(r'(?:от\s*общо\s*|от\s*)(\d+)\s*обяв[иа]', text, re.IGNORECASE)
     if m: return int(m.group(1))
@@ -122,14 +121,14 @@ def parse_total_ads(html):
     return None
 
 
-def parse_page(html, page_num=None):
-    soup  = BeautifulSoup(html, 'html.parser')
+def parse_page(page_content, pg_num=None):
+    soup  = BeautifulSoup(page_content, 'html.parser')
     items = soup.find_all('div', class_='item')
     if not items:
-        logger.warning(f"No items found on page {page_num or 1}")
+        logger.warning(f"No items found on page {pg_num or 1}")
         return 0
 
-    count = 0
+    page_count = 0
     for item in items:
         try:
             title_a = item.find('a', class_='title')
@@ -188,12 +187,12 @@ def parse_page(html, page_num=None):
                 COL_SITE_PRICE_HISTORY: "",
                 COL_IMAGES:             "",
             })
-            count += 1
-        except Exception as e:
-            logger.warning(f"Error parsing item on page {page_num or 1}: {e}")
+            page_count += 1
+        except Exception as parse_err:
+            logger.warning(f"Error parsing item on page {pg_num or 1}: {parse_err}")
 
-    logger.info(f"Scraped {count} listings from page {page_num or 1}")
-    return count
+    logger.info(f"Scraped {page_count} listings from page {pg_num or 1}")
+    return page_count
 
 
 def format_price_history_entry(price, date_str):
@@ -230,13 +229,13 @@ def deduplicate_history(df, link_col, price_history_col):
 
     df[price_history_col] = df[price_history_col].fillna("").astype(str)
     agg = {}
-    for c in df.columns:
-        agg[c] = merge_history if c == price_history_col else 'last'
+    for col_key in df.columns:
+        agg[col_key] = merge_history if col_key == price_history_col else 'last'
     return df.groupby(link_col, as_index=False).agg(agg)
 
 
-def parse_site_price_history_html(html):
-    soup      = BeautifulSoup(html, 'html.parser')
+def parse_site_price_history_html(raw_html):
+    soup      = BeautifulSoup(raw_html, 'html.parser')
     container = soup.find('div', id='priceHistory2')
     node      = None
     if container:
@@ -339,89 +338,117 @@ def parse_site_price_history_html(html):
 
 # ================= IMAGE DOWNLOAD =================
 
-def listing_id(url):
-    """Кратък уникален ID от URL-а на обявата."""
-    return hashlib.md5(url.encode()).hexdigest()[:12]
+def get_listing_id_from_url(url):
+    """Извлича ID-то на обявата от URL-а (напр. 1c176432069391545)"""
+    match = re.search(r'obiava-([a-z0-9]+)-', url)
+    return match.group(1) if match else None
 
 
-def download_images(url, page_html, max_images=2):
-    """
-    Свали първите max_images снимки от HTML-а на страницата.
-    Записва ги в docs/images/{id}/1.jpg, 2.jpg
-    Връща comma-separated relative paths (спрямо docs/).
-    """
-    lid     = listing_id(url)
-    img_dir = IMAGES_DIR / lid
+def extract_images_improved(page, listing_url, max_images=3):
+    urls = []
+    listing_id = get_listing_id_from_url(listing_url)
 
-    # Ако снимките вече са свалени — не свалявай отново
-    if img_dir.exists():
-        existing = sorted(img_dir.glob("*.jpg"))
-        if len(existing) >= max_images:
-            return ",".join(
-                str(p).replace("\\", "/").replace("docs/", "")
-                for p in existing[:max_images]
-            )
+    if not listing_id:
+        logger.warning("Could not extract listing ID from URL")
+        return []
 
     try:
-        soup = BeautifulSoup(page_html, 'html.parser')
+        page.wait_for_timeout(1500)
 
-        # Реалните снимки на imot.bg са в img.carouselimg.owl-lazy
-        imgs = soup.select('img.carouselimg.owl-lazy')
+        # Агресивно зареждане на галерията
+        for _ in range(5):
+            page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(500)
 
-        srcs = []
-        for img in imgs:
-            # Браузърът зарежда от src, но BeautifulSoup чете data-src преди lazy load
-            src = img.get('src') or img.get('data-src') or ''
-            if src and src.startswith('http'):
-                srcs.append(src)
-            if len(srcs) >= max_images:
-                break
+        # Взимаме всички carousel изображения
+        images = page.query_selector_all("img.carouselimg")
 
-        if not srcs:
-            logger.debug(f"No images found for {url}")
-            return ""
-
-        img_dir.mkdir(parents=True, exist_ok=True)
-        saved = []
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-        }
-        for i, src in enumerate(srcs[:max_images], start=1):
+        # Събираме кандидатите с техния номер от alt="... изображение N"
+        candidates = []
+        for img in images:
             try:
-                r = requests.get(src, timeout=10, headers=headers)
-                if r.status_code == 200:
-                    path = img_dir / f"{i}.jpg"
-                    path.write_bytes(r.content)
-                    # Relative path за HTML (спрямо docs/)
-                    rel = f"images/{lid}/{i}.jpg"
-                    saved.append(rel)
-                    logger.debug(f"Downloaded image {i} for {url}")
-            except Exception as ex:
-                logger.debug(f"Image {i} download failed for {url}: {ex}")
+                data_src_gallery = img.get_attribute("data-src-gallery")
+                data_src = img.get_attribute("data-src")
+                src = img.get_attribute("src")
+                alt = img.get_attribute("alt") or ""
 
-        return ",".join(saved)
+                # Приоритет: data-src-gallery > data-src > src
+                candidate = data_src_gallery or data_src or src
+
+                if candidate and ("imotstatic" in candidate or "cdn" in candidate or "focus.bg" in candidate):
+
+                    if listing_id in candidate:
+                        # Извличаме номера от alt напр. "изображение 1", "изображение 2"
+                        m = re.search(r'изображение\s+(\d+)', alt, re.IGNORECASE)
+                        order = int(m.group(1)) if m else 9999
+                        candidates.append((order, candidate))
+            except:
+                continue
+
+        # Сортираме по номер → изображение 1 първо, изображение 2 второ и т.н.
+        candidates.sort(key=lambda x: x[0])
+        urls = [url for _, url in candidates]
+
+        # Премахваме дубликати и лимитираме
+        unique_urls = list(dict.fromkeys(urls))
+        logger.debug(
+            f"Found {len(unique_urls)} images for listing {listing_id}, "
+            f"order: {[o for o, _ in candidates[:max_images]]}"
+        )
+
+        return unique_urls[:max_images]
 
     except Exception as e:
-        logger.warning(f"Image download error for {url}: {e}")
+        logger.warning(f"extract_images_improved error: {e}")
+        return urls
+
+
+def download_images_from_urls(listing_url, image_urls, max_images=3):
+    if not image_urls:
+        logger.warning(f"No valid images found for {listing_url}")
         return ""
 
+    lid = get_listing_id_from_url(listing_url)
+    img_dir = IMAGES_DIR / lid
+    img_dir.mkdir(parents=True, exist_ok=True)
 
-# ================= SELENIUM: PRICE HISTORY + IMAGES =================
+    saved = []
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    for i, src in enumerate(image_urls[:max_images], start=1):
+        try:
+            r = requests.get(src, timeout=20, headers=headers)
+            if r.status_code == 200 and len(r.content) > 10000:   # филтър за качествени снимки
+                path = img_dir / f"{i}.jpg"
+                path.write_bytes(r.content)
+                rel = f"images/{lid}/{i}.jpg"
+                saved.append(rel)
+                logger.debug(f"✓ Downloaded correct image {i} for {listing_url}")
+        except Exception as ex:
+            logger.debug(f"Download failed: {ex}")
+
+    return ",".join(saved) if saved else ""
+
+
+# ================= SELENIUM + PLAYWRIGHT: PRICE HISTORY + IMAGES =================
 
 def scrape_site_price_histories_selenium(links):
     """
-    Посещава всяка обява с Selenium.
-    Връща dict: {url: {"price_history": str, "images": str}}
+    Обновена версия:
+      - По-добро извличане на снимки
+      - Филтрира обяви без снимки (ако искаш)
+      - Почистване на "никакви" обяви
     """
-    result = {url: {"price_history": "", "images": ""} for url in links}
     if not links:
-        return result
+        return {}
 
-    total   = len(links)
-    success = empty = failed = 0
-    logger.info(f"Fetching site price history + images for {total} listings")
+    total = len(links)
+    result = {url: {"price_history": "", "images": ""} for url in links}
 
+    logger.info(f"Processing {total} listings...")
+
+    # Selenium за price history
+    driver = None
     try:
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
@@ -431,75 +458,84 @@ def scrape_site_price_histories_selenium(links):
 
         options = Options()
         options.add_argument("--headless")
-        options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--window-size=1920,1080")
-        options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        driver = webdriver.Chrome(options=options)
-    except Exception:
-        logger.warning("Selenium init failed; skipping site price histories and images")
-        return result
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
+        driver = webdriver.Chrome(options=options)
+        wait = WebDriverWait(driver, 10)
+    except Exception as selenium_err:
+        logger.error(f"Selenium failed: {selenium_err}")
+
+    # Playwright за снимки
+    pw_browser = None
     try:
-        wait = WebDriverWait(driver, 12)
-        for idx, url in enumerate(links, start=1):
-            logger.info(f"Site price history + images [{idx}/{total}]: {url}")
+        from playwright.sync_api import sync_playwright
+        pw = sync_playwright().start()
+        pw_browser = pw.chromium.launch(headless=True)
+    except Exception as pw_init_err:
+        logger.warning(f"Playwright init failed: {pw_init_err}")
+
+    good_listings = 0
+
+    for idx, url in enumerate(links, start=1):
+        logger.info(f"[{idx}/{total}] {url}")
+
+        # ================= PRICE HISTORY =================
+        price_hist = ""
+        if driver:
             try:
                 driver.get(url)
-                price_history_elem = wait.until(
-                    EC.presence_of_element_located((By.ID, "priceHistory2"))
-                )
-
-                # ── Price history ──────────────────────────────────────────
-                try:
-                    title_span = price_history_elem.find_element(
-                        By.CSS_SELECTOR, 'div.title span[onclick*="showpricechange"]'
-                    )
-                    onclick_attr = title_span.get_attribute("onclick") or ""
-                    start_i = onclick_attr.find("(") + 1
-                    end_i   = onclick_attr.rfind(");")
-                    params  = [p.strip().strip("'") for p in onclick_attr[start_i:end_i].split(",")]
-                    if len(params) >= 5:
-                        js_code = (
-                            f"showpricechange('{params[0]}','{params[1]}',"
-                            f"'{params[2]}','{params[3]}','{params[4]}');"
-                        )
-                        driver.execute_script(js_code)
-                        try:
-                            wait.until(EC.presence_of_element_located((By.TAG_NAME, "statistiki")))
-                        except Exception:
-                            pass
-                        time.sleep(1)
-                except Exception:
-                    pass
-
+                time.sleep(1.5)
                 page_html = driver.page_source
                 price_hist = parse_site_price_history_html(page_html)
-                result[url]["price_history"] = price_hist
-                if price_hist.strip():
-                    success += 1
-                else:
-                    empty += 1
-
-                # ── Images ────────────────────────────────────────────────
-                img_paths = download_images(url, page_html)
-                result[url]["images"] = img_paths
-                if img_paths:
-                    logger.info(f"  → {len(img_paths.split(','))} image(s) saved")
-
             except Exception:
-                failed += 1
+                pass
 
-        logger.info(f"Site price history: total={total}, ok={success}, empty={empty}, failed={failed}")
-        return result
-    finally:
+        result[url]["price_history"] = price_hist
+
+        # ================= IMAGES (Playwright) =================
+        img_paths = ""
+        if pw_browser:
+            try:
+                p_page = pw_browser.new_page()
+                p_page.set_extra_http_headers({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+
+                p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                p_page.wait_for_load_state("networkidle", timeout=10000)
+
+                # === ТОВА Е ВАЖНОТО ===
+                image_urls = extract_images_improved(p_page, url, max_images=6)
+
+                if image_urls:
+                    img_paths = download_images_from_urls(url, image_urls, max_images=3)
+                    if img_paths:
+                        logger.info(f"  → {len(img_paths.split(','))} снимки свалени")
+                    else:
+                        logger.warning(f"  → Не успях да сваля снимките")
+                else:
+                    logger.warning(f"  → Няма намерени снимки за обявата")
+
+                p_page.close()
+
+            except Exception as pw_err:
+                logger.warning(f"Playwright error for {url}: {pw_err}")
+
+        result[url]["images"] = img_paths
+
+        time.sleep(2 + random.uniform(0, 1))
+
+    # Cleanup
+    if driver:
         driver.quit()
+    if pw_browser:
+        pw_browser.close()
+
+    logger.info(f"Finished. Good listings with images: {good_listings}/{total}")
+    return result
 
 
 # ================= HTML GENERATOR =================
@@ -513,20 +549,20 @@ def _fmt_size(x):
 def _fmt_pm2(x):
     return f"{int(round(x))} €/m²" if pd.notna(x) and x else "—"
 
-def _link_cell(url):
-    if not url or pd.isna(url): return "—"
-    return f'<a href="{url}" target="_blank" rel="noopener">🔗 Виж</a>'
+def _link_cell(href):
+    if not href or pd.isna(href): return "—"
+    return f'<a href="{href}" target="_blank" rel="noopener">🔗 Виж</a>'
 
 def _img_cell(paths_str):
     """Показва до 2 thumbnail-а от запазените снимки."""
     if not paths_str or pd.isna(paths_str) or str(paths_str).strip() == "":
         return "—"
     html_parts = []
-    for p in str(paths_str).split(",")[:2]:
-        p = p.strip()
-        if p:
+    for img_path in str(paths_str).split(",")[:2]:
+        img_path = img_path.strip()
+        if img_path:
             html_parts.append(
-                f'<img src="{p}" '
+                f'<img src="{img_path}" '
                 f'style="width:72px;height:54px;object-fit:cover;'
                 f'border-radius:4px;margin-right:4px;cursor:pointer" '
                 f'onclick="window.open(this.src)" '
@@ -539,19 +575,19 @@ def _build_rows(df, cols):
     rows_html = []
     for _, row in df.iterrows():
         cells = []
-        for c in cols:
-            val = row.get(c, "")
-            if c == COL_LINK:
+        for col_key in cols:
+            val = row.get(col_key, "")
+            if col_key == COL_LINK:
                 cells.append(f"<td>{_link_cell(val)}</td>")
-            elif c == COL_PRICE:
+            elif col_key == COL_PRICE:
                 cells.append(f"<td>{_fmt_price(val)}</td>")
-            elif c == COL_SIZE:
+            elif col_key == COL_SIZE:
                 cells.append(f"<td>{_fmt_size(val)}</td>")
-            elif c == COL_PRICE_PER_SQM:
+            elif col_key == COL_PRICE_PER_SQM:
                 cells.append(f"<td>{_fmt_pm2(val)}</td>")
-            elif c == COL_IMAGES:
+            elif col_key == COL_IMAGES:
                 cells.append(f"<td>{_img_cell(val)}</td>")
-            elif c == 'Price_EUR_old':
+            elif col_key == 'Price_EUR_old':
                 cells.append(f"<td class='old-price'>{_fmt_price(val)}</td>")
             else:
                 cells.append(f"<td>{val if pd.notna(val) and val != '' else '—'}</td>")
@@ -569,14 +605,13 @@ def _table(df, cols, headers, css_id="", extra_class=""):
     return f'<table{id_attr} class="{cls}"><thead>{thead}</thead><tbody>{tbody}</tbody></table>'
 
 
-def generate_html(df_all: pd.DataFrame, now_str: str):
+def generate_html(df_input: pd.DataFrame, now_str: str):
     """Generate docs/index.html from the full history dataframe."""
 
     cutoff = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
 
     # ── Derive sections ───────────────────────────────────────────────────────
-    df_active = df_all[~df_all[COL_SOLD].fillna(False)].copy() if not df_all.empty else pd.DataFrame()
-
+    df_active = df_input[~df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
     if COL_FIRST_SEEN in df_all.columns and not df_all.empty:
         df_new10 = df_active[df_active[COL_FIRST_SEEN].fillna("") >= cutoff].copy()
     else:
@@ -591,17 +626,17 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     else:
         df_changed10 = pd.DataFrame()
 
-    df_sold = df_all[df_all[COL_SOLD].fillna(False)].copy() if not df_all.empty else pd.DataFrame()
+    df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
 
     n_total   = len(df_active)
-    n_new10   = len(df_new10)
     n_changed = len(df_changed10)
     n_sold    = len(df_sold)
 
     if not df_active.empty:
-        df_active = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
+        df_active    = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
     if not df_new10.empty:
-        df_new10  = df_new10.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new10.columns else COL_SCRAPED_DATE, ascending=False)
+        df_new10 = df_new10.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new10.columns else COL_SCRAPED_DATE,
+                                        ascending=False)
     if not df_changed10.empty:
         df_changed10 = df_changed10.sort_values(COL_SCRAPED_DATE, ascending=False)
 
@@ -611,13 +646,6 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година", "История (сайт)", ""],
         css_id="new-table",
-    )
-
-    changed_table = _table(
-        df_changed10,
-        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Текуща цена", "Площ", "€/m²", "История на цената", "История (сайт)", ""],
-        css_id="changed-table",
     )
 
     all_table = _table(
@@ -636,7 +664,7 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     )
 
     # ── Full HTML ─────────────────────────────────────────────────────────────
-    html = f"""<!DOCTYPE html>
+    dashboard_html = f"""<!DOCTYPE html>
 <html lang="bg">
 <head>
 <meta charset="UTF-8">
@@ -906,12 +934,8 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
     <div class="stat-label">Активни обяви</div>
   </div>
   <div class="stat">
-    <div class="stat-num green">{n_new10}</div>
-    <div class="stat-label">Нови (10 дни)</div>
-  </div>
-  <div class="stat">
     <div class="stat-num orange">{n_changed}</div>
-    <div class="stat-label">Промени в цена (10 дни)</div>
+    <div class="stat-label">Промени в цена</div>
   </div>
   <div class="stat">
     <div class="stat-num red">{n_sold}</div>
@@ -920,29 +944,13 @@ def generate_html(df_all: pd.DataFrame, now_str: str):
 </div>
 
 <nav>
-  <a href="#new"     class="active">Нови (10 дни)</a>
-  <a href="#changed">Промени (10 дни)</a>
+  <a href="#new"     class="active">Нови</a>
+  <a href="#changed">Промени</a>
   <a href="#all">Всички активни</a>
   <a href="#sold">Продадени</a>
 </nav>
 
 <main>
-
-  <section id="new">
-    <h2>Нови обяви <span class="badge">{n_new10}</span></h2>
-    <p class="section-desc">Обяви, открити за първи път в последните 10 дни.</p>
-    <div class="table-wrap">
-      {new_table}
-    </div>
-  </section>
-
-  <section id="changed">
-    <h2>Промени в цена <span class="badge">{n_changed}</span></h2>
-    <p class="section-desc">Активни обяви с регистрирана промяна на цената в последните 10 дни.</p>
-    <div class="table-wrap">
-      {changed_table}
-    </div>
-  </section>
 
   <section id="all">
     <h2>Всички активни обяви <span class="badge">{n_total}</span></h2>
@@ -1024,7 +1032,7 @@ sections.forEach(s => observer.observe(s));
 </body>
 </html>"""
 
-    HTML_OUTPUT.write_text(html, encoding="utf-8")
+    HTML_OUTPUT.write_text(dashboard_html, encoding="utf-8")
     logger.info(f"HTML dashboard written to {HTML_OUTPUT}")
 
 
@@ -1047,12 +1055,12 @@ with sync_playwright() as p:
         page.goto(base_url, wait_until='domcontentloaded', timeout=60000)
         page.wait_for_selector('div.item', timeout=25000)
 
-        html      = page.content()
-        total_ads = parse_total_ads(html)
+        html_content = page.content()
+        total_ads = parse_total_ads(html_content)
         if total_ads: logger.info(f"Total listings: {total_ads}")
         else:         logger.warning("Could not extract total listings count")
 
-        parse_page(html, page_num=1)
+        parse_page(html_content, pg_num=1)
 
         max_pages = (
             (total_ads // items_per_page) + (1 if total_ads % items_per_page else 0)
@@ -1060,29 +1068,29 @@ with sync_playwright() as p:
         )
         logger.info(f"Planning to scrape up to {max_pages} pages")
 
-        page_num = 2
-        while page_num <= max_pages + 2:
+        pg = 2
+        while pg <= max_pages + 2:
             try:
                 url = (
-                    base_url.replace('?', f'/p-{page_num}?')
-                    if '?' in base_url else f"{base_url}/p-{page_num}"
+                    base_url.replace('?', f'/p-{pg}?')
+                    if '?' in base_url else f"{base_url}/p-{pg}"
                 )
-                logger.info(f"Loading page {page_num}: {url}")
+                logger.info(f"Loading page {pg}: {url}")
                 page.goto(url, wait_until='domcontentloaded', timeout=45000)
                 try:
                     page.wait_for_selector('div.item', timeout=12000)
                 except PlaywrightTimeoutError:
-                    logger.info(f"No more listings on page {page_num}")
+                    logger.info(f"No more listings on page {pg}")
                     break
-                count = parse_page(page.content(), page_num=page_num)
-                if count == 0:
-                    logger.info(f"Empty page {page_num} → stopping")
+                scraped = parse_page(page.content(), pg_num=pg)
+                if scraped == 0:
+                    logger.info(f"Empty page {pg} → stopping")
                     break
                 time.sleep(2.8 + random.uniform(0, 1.8))
-            except Exception as e:
-                logger.error(f"Error on page {page_num}: {e}")
+            except Exception as scrape_err:
+                logger.error(f"Error on page {pg}: {scrape_err}")
                 break
-            page_num += 1
+            pg += 1
 
     except Exception as e:
         logger.critical(f"Critical scraping error: {e}")
@@ -1162,9 +1170,9 @@ if not df_history.empty:
     changed = merged[changed_mask].copy()
 
     if not changed.empty:
-        def update_history(row):
-            hist      = row[f'{COL_PRICE_HISTORY}_old']
-            old_entry = format_price_history_entry(row[f'{COL_PRICE}_old'], "before")
+        def update_history(hist_row):
+            hist      = hist_row[f'{COL_PRICE_HISTORY}_old']
+            old_entry = format_price_history_entry(hist_row[f'{COL_PRICE}_old'], "before")
             if old_entry and old_entry not in hist:
                 return f"{hist} → {old_entry}" if hist.strip() else old_entry
             return hist
@@ -1297,7 +1305,7 @@ try:
             if ws.cell(row=row_idx, column=sold_col_idx).value:
                 for col_idx in range(1, ws.max_column + 1):
                     c = ws.cell(row=row_idx, column=col_idx)
-                    c.font = Font(strike=True, color="777777", name=c.font.name, size=c.font.sz)
+                    c.font = Font(strikethrough=True, color="FF777777")
     wb.save(excel_file)
 except Exception as e:
     logger.error(f"Excel formatting error: {e}")
@@ -1334,22 +1342,22 @@ a{color:#4f9cf9;text-decoration:none}
 </style>"""
 
     def to_html_table(df_in, cols, headers, extra_class=""):
-        thead = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
-        rows  = []
-        for _, r in df_in.iterrows():
+        tbl_head = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
+        tbl_rows = []
+        for _, email_row in df_in.iterrows():
             cells = []
-            for c in cols:
-                v = r.get(c, "")
-                if c == COL_LINK:
+            for col_name in cols:
+                v = email_row.get(col_name, "")
+                if col_name == COL_LINK:
                     cells.append(f"<td><a href='{v}' target='_blank'>Виж →</a></td>")
-                elif c == COL_PRICE:    cells.append(f"<td>{fmt_p(v)}</td>")
-                elif c == COL_SIZE:     cells.append(f"<td>{fmt_s(v)}</td>")
-                elif c == COL_PRICE_PER_SQM: cells.append(f"<td>{fmt_m(v)}</td>")
-                elif c == 'Price_EUR_old': cells.append(f"<td style='text-decoration:line-through;color:#999'>{fmt_p(v)}</td>")
+                elif col_name == COL_PRICE:         cells.append(f"<td>{fmt_p(v)}</td>")
+                elif col_name == COL_SIZE:          cells.append(f"<td>{fmt_s(v)}</td>")
+                elif col_name == COL_PRICE_PER_SQM: cells.append(f"<td>{fmt_m(v)}</td>")
+                elif col_name == 'Price_EUR_old':   cells.append(f"<td style='text-decoration:line-through;color:#999'>{fmt_p(v)}</td>")
                 else: cells.append(f"<td>{v if pd.notna(v) and v != '' else '—'}</td>")
-            rows.append("<tr>" + "".join(cells) + "</tr>")
+            tbl_rows.append("<tr>" + "".join(cells) + "</tr>")
         cls = f"imot-table {extra_class}".strip()
-        return f"<table class='{cls}'><thead>{thead}</thead><tbody>{''.join(rows)}</tbody></table>"
+        return f"<table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table>"
 
     new_section = changed_section = sold_section = ""
 
@@ -1360,12 +1368,12 @@ a{color:#4f9cf9;text-decoration:none}
         new_section = f"""<h3><span class="pill new">НОВИ</span> &nbsp;{len(df_new_only)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_changed.empty:
-        d = df_changed.copy()
-        if COL_PRICE_PER_SQM not in d.columns and f'{COL_PRICE_PER_SQM}_new' in d.columns:
-            d = d.rename(columns={f'{COL_PRICE_PER_SQM}_new': COL_PRICE_PER_SQM})
-        if COL_PRICE in d.columns and COL_SIZE in d.columns and COL_PRICE_PER_SQM not in d.columns:
-            d[COL_PRICE_PER_SQM] = (d[COL_PRICE] / d[COL_SIZE]).round(2)
-        tbl = to_html_table(d,
+        df_ch = df_changed.copy()
+        if COL_PRICE_PER_SQM not in df_ch.columns and f'{COL_PRICE_PER_SQM}_new' in df_ch.columns:
+            df_ch = df_ch.rename(columns={f'{COL_PRICE_PER_SQM}_new': COL_PRICE_PER_SQM})
+        if COL_PRICE in df_ch.columns and COL_SIZE in df_ch.columns and COL_PRICE_PER_SQM not in df_ch.columns:
+            df_ch[COL_PRICE_PER_SQM] = (df_ch[COL_PRICE] / df_ch[COL_SIZE]).round(2)
+        tbl = to_html_table(df_ch,
             [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_LINK],
             ["Локация", "Нова цена", "Площ", "€/m²", "История на цената", ""])
         changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
@@ -1383,7 +1391,7 @@ a{color:#4f9cf9;text-decoration:none}
     if not df_sold_now.empty:   subject_parts.append(f"{len(df_sold_now)} ПРОДАДЕНИ")
     subject = f"Имоти – {' · '.join(subject_parts)} – {TODAY}"
 
-    html_content = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
+    email_html = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
 <div class="wrap">
   <div class="hdr">
     <h1>🏠 Имоти · сем. Кирилови</h1>
@@ -1404,15 +1412,15 @@ a{color:#4f9cf9;text-decoration:none}
     msg['From']    = SENDER_EMAIL
     msg['To']      = ", ".join(RECEIVERS)
     msg['Subject'] = subject
-    msg.attach(MIMEText(html_content, "html", _charset="utf-8"))
+    msg.attach(MIMEText(email_html, "html", _charset="utf-8"))
 
     try:
         with open(excel_file, 'rb') as f:
             part = MIMEApplication(f.read(), Name=excel_file)
             part['Content-Disposition'] = f'attachment; filename="{excel_file}"'
             msg.attach(part)
-    except Exception as e:
-        logger.error(f"Failed to attach Excel: {e}")
+    except Exception as attach_err:
+        logger.error(f"Failed to attach Excel: {attach_err}")
 
     try:
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
@@ -1421,8 +1429,8 @@ a{color:#4f9cf9;text-decoration:none}
         server.send_message(msg)
         server.quit()
         logger.info("✔ Email sent")
-    except Exception as e:
-        logger.error(f"❌ Email error: {e}")
+    except Exception as smtp_err:
+        logger.error(f"❌ Email error: {smtp_err}")
 else:
     logger.info("No changes → email not sent")
 
