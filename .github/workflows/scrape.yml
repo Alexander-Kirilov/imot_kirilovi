@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: write
+    env:
+      TZ: Europe/Sofia
 
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +55,9 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          RECEIVERS: ${{ secrets.RECEIVERS }}
         run: python imot_scraper.py
 
       # ← ДОБАВИ ТАЗИ СТЪПКА

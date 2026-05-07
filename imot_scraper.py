@@ -33,50 +33,54 @@ logger.info("=== Starting imot.bg scraper ===")
 
 # ================= PATHS & CONFIG =================
 HISTORY_FILE = "all_listings_history.parquet"
-HTML_OUTPUT  = Path("docs/index.html")   # GitHub Pages serves from /docs
-IMAGES_DIR   = Path("docs/images")       # Downloaded listing images
+HTML_OUTPUT = Path("docs/index.html")  # GitHub Pages serves from /docs
+IMAGES_DIR = Path("docs/images")  # Downloaded listing images
 HTML_OUTPUT.parent.mkdir(exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-TODAY     = datetime.now().strftime("%Y-%m-%d")
-NOW_STR   = datetime.now().strftime("%d.%m.%Y %H:%M")
+TODAY = datetime.now().strftime("%Y-%m-%d")
+NOW_STR = datetime.now().strftime("%d.%m.%Y %H:%M")
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 excel_file = f"imot_bg_scraping_{timestamp}.xlsx"
 
 # ── Email ─────────────────────────────────────────────────────────────────────
-SMTP_SERVER     = "smtp.gmail.com"
-SMTP_PORT       = 587
-SENDER_EMAIL    = "a.kirilov74@gmail.com"
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "a.kirilov74@gmail.com")
 SENDER_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 if not SENDER_PASSWORD:
     logger.error("GMAIL_APP_PASSWORD secret is not set!")
-RECEIVERS       = ["a.kirilov74@gmail.com", "hristina.padeva@gmail.com"]
+
+# Списък с получатели от променлива на средата (разделени със запетая)
+RECEIVERS_RAW = os.environ.get("RECEIVERS", "a.kirilov74@gmail.com,hristina.padeva@gmail.com")
+RECEIVERS = [r.strip() for r in RECEIVERS_RAW.split(",") if r.strip()]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
-base_url = (
-#    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-2/tristaen?type_home=4~5~&kv_min=101&price_max=280000&ybuild_type=1'  1 имот за тестове
-    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/darvenitsa/tristaen?type_home=4~5~&kv_min=85&price_max=290000&raioni=44~45~46~47~48~&ybuild_type=1'
+# Линкът за търсене вече се взима от променлива на средата
+base_url = os.environ.get(
+    "BASE_URL",
+    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen?type_home=4~5~&kv_min=89&kv_max=90&price_max=280000&floor_from=8&floor_to=8&raioni=45~46~47~48~&ybuild_type=1'
 )
 
 listings = []
 
 # ── Column constants ──────────────────────────────────────────────────────────
-COL_LINK            = 'Link'
-COL_PRICE           = 'Price_EUR'
-COL_SIZE            = 'Size_sqm'
-COL_PRICE_PER_SQM   = 'Price_EUR_per_sqm'
-COL_LOCATION        = 'Location'
-COL_FLOOR           = 'Floor'
-COL_TOTAL_FLOORS    = 'Total_floors'
-COL_YEAR            = 'Year_built'
-COL_INFO            = 'Info'
-COL_TITLE           = 'Title'
-COL_SCRAPED_DATE    = 'Scraped_Date'
-COL_FIRST_SEEN      = 'First_Seen_Date'
-COL_PRICE_HISTORY   = 'Price_History'
-COL_SOLD            = 'Sold'
-COL_SITE_PRICE_HISTORY = 'Site price history'
-COL_IMAGES          = 'Image_Paths'   # comma-separated relative paths
+COL_LINK = 'Link'
+COL_PRICE = 'Price_EUR'
+COL_SIZE = 'Size_sqm'
+COL_PRICE_PER_SQM = 'Price_EUR_per_sqm'
+COL_LOCATION = 'Location'
+COL_FLOOR = 'Floor'
+COL_TOTAL_FLOORS = 'Total_floors'
+COL_YEAR = 'Year_built'
+COL_INFO = 'Info'
+COL_TITLE = 'Title'
+COL_SCRAPED_DATE = 'Scraped_Date'
+COL_FIRST_SEEN = 'First_Seen_Date'
+COL_PRICE_HISTORY = 'Price_History'
+COL_SOLD = 'Sold'
+COL_SITE_PRICE_HISTORY = 'Свалена_ценова_история'
+COL_IMAGES = 'Image_Paths'  # comma-separated relative paths
 
 
 # ================= HELPERS =================
@@ -97,11 +101,11 @@ def normalize_location(loc):
     if not loc: return loc
     rules = {
         r'Младост\s*IV-ти': 'Младост 4',
-        r'Младост\s*IV':    'Младост 4',
-        r'Младост\s*V':     'Младост 5',
-        r'Младост\s*III':   'Младост 3',
-        r'Младост\s*II':    'Младост 2',
-        r'Младост\s*I\b':   'Младост 1',
+        r'Младост\s*IV': 'Младост 4',
+        r'Младост\s*V': 'Младост 5',
+        r'Младост\s*III': 'Младост 3',
+        r'Младост\s*II': 'Младост 2',
+        r'Младост\s*I\b': 'Младост 1',
     }
     orig = loc
     for pat, repl in rules.items():
@@ -122,7 +126,7 @@ def parse_total_ads(page_content):
 
 
 def parse_page(page_content, pg_num=None):
-    soup  = BeautifulSoup(page_content, 'html.parser')
+    soup = BeautifulSoup(page_content, 'html.parser')
     items = soup.find_all('div', class_='item')
     if not items:
         logger.warning(f"No items found on page {pg_num or 1}")
@@ -135,18 +139,21 @@ def parse_page(page_content, pg_num=None):
             if not title_a: continue
 
             title = title_a.get_text(separator=' ', strip=True)
-            href  = title_a['href'].strip()
+            href = title_a['href'].strip()
             if 'fakti.bg' in href.lower() or not href.startswith(('https://www.imot.bg', '//', '/')):
                 continue
-            if href.startswith('//'): href = 'https:' + href
-            elif href.startswith('/'): href = 'https://www.imot.bg' + href
-            elif not href.startswith('http'): href = 'https://www.imot.bg/' + href
+            if href.startswith('//'):
+                href = 'https:' + href
+            elif href.startswith('/'):
+                href = 'https://www.imot.bg' + href
+            elif not href.startswith('http'):
+                href = 'https://www.imot.bg/' + href
 
             price_div = item.find('div', class_='price')
             price_raw = price_div.get_text(strip=True) if price_div else ''
             price_eur = clean_price(price_raw)
 
-            info_div  = item.find('div', class_='info')
+            info_div = item.find('div', class_='info')
             info_text = info_div.get_text(strip=True) if info_div else ''
 
             size = None
@@ -171,21 +178,21 @@ def parse_page(page_content, pg_num=None):
             price_m2 = round(price_eur / size, 2) if price_eur and size and size > 0 else None
 
             listings.append({
-                COL_TITLE:              title,
-                COL_LOCATION:           location,
-                COL_PRICE:              price_eur,
-                COL_SIZE:               size,
-                COL_PRICE_PER_SQM:      price_m2,
-                COL_FLOOR:              floor,
-                COL_TOTAL_FLOORS:       total_floors,
-                COL_YEAR:               year,
-                COL_INFO:               info_text,
-                COL_LINK:               href,
-                COL_SCRAPED_DATE:       TODAY,
-                COL_FIRST_SEEN:         TODAY,
-                COL_PRICE_HISTORY:      "",
+                COL_TITLE: title,
+                COL_LOCATION: location,
+                COL_PRICE: price_eur,
+                COL_SIZE: size,
+                COL_PRICE_PER_SQM: price_m2,
+                COL_FLOOR: floor,
+                COL_TOTAL_FLOORS: total_floors,
+                COL_YEAR: year,
+                COL_INFO: info_text,
+                COL_LINK: href,
+                COL_SCRAPED_DATE: TODAY,
+                COL_FIRST_SEEN: TODAY,
+                COL_PRICE_HISTORY: "",
                 COL_SITE_PRICE_HISTORY: "",
-                COL_IMAGES:             "",
+                COL_IMAGES: "",
             })
             page_count += 1
         except Exception as parse_err:
@@ -218,8 +225,8 @@ def append_current_if_needed(hist, price, date):
 
 def deduplicate_history(df, link_col, price_history_col):
     def merge_history(series):
-        vals   = [v.strip() for v in series if isinstance(v, str) and v.strip()]
-        seen   = set()
+        vals = [v.strip() for v in series if isinstance(v, str) and v.strip()]
+        seen = set()
         result = []
         for v in vals:
             if v not in seen:
@@ -235,105 +242,69 @@ def deduplicate_history(df, link_col, price_history_col):
 
 
 def parse_site_price_history_html(raw_html):
-    soup      = BeautifulSoup(raw_html, 'html.parser')
+    """
+    Надеждно парсване на ценовата история от imot.bg
+    """
+    if not raw_html or len(raw_html) < 100:
+        return ""
+
+    soup = BeautifulSoup(raw_html, 'html.parser')
+
+    # Търсим контейнера по различни начини
     container = soup.find('div', id='priceHistory2')
-    node      = None
-    if container:
-        node = container.find('statistiki')
-    if not node:
-        node = soup.find('statistiki')
-    if not node:
+    if not container:
         return ""
 
-    divs = node.find_all('div', recursive=False)
-    divs = [d for d in divs if d.get_text(strip=True)]
-    if len(divs) < 4:
+    statistiki = container.find('statistiki')
+    if not statistiki:
+        statistiki = soup.find('statistiki')
+    if not statistiki:
         return ""
 
-    def parse_bg_datetime(s):
-        m = re.search(r"(\d{2})\.(\d{2})\.(\d{4}).*?(\d{2})\.(\d{2})", s)
-        if not m: return None
-        day, month, year, hour, minute = map(int, m.groups())
-        try: return datetime(year, month, day, hour, minute)
-        except ValueError: return None
-
-    def parse_change_number(s):
-        if not s: return None
-        s_clean = s.replace("\xa0", " ")
-        m = re.search(r"([-+−]?\s*\d[\d\s]*)", s_clean)
-        if not m: return None
-        try:
-            raw = m.group(1).replace(" ", "").replace("−", "-")
-            return int(raw)
-        except ValueError: return None
-
-    def parse_price_number(s):
-        if not s: return None
-        m = re.search(r"([\d\s.,]+)", s)
-        if not m: return None
-        num = m.group(1).replace(" ", "").replace(",", ".")
-        try: return float(num)
-        except ValueError: return None
-
-    def format_eur_int(value):
-        try:
-            v = int(round(float(value)))
-            return f"{v:,}".replace(",", " ") + " €"
-        except Exception: return ""
-
-    rows = []
-    initial_price_num = None
-    i = 0
-    while i + 1 < len(divs):
-        group = divs[i: i + 4]
-        texts = [g.get_text(" ", strip=True) for g in group]
-        date_text = price_text = change_text = ""
-        for t in texts:
-            if not price_text and "€" in t: price_text = t
-            if not date_text and ("начало" in t.lower() or re.search(r"\d{2}\.\d{2}\.\d{4}", t)):
-                date_text = t
-            if not change_text and any(ch in t for ch in ["+", "−", "-", "↑", "↓"]):
-                change_text = t
-        if price_text and date_text:
-            if date_text.strip().lower().startswith("начало"):
-                initial_price_num = parse_price_number(price_text)
-            else:
-                rows.append({"date": date_text, "change": change_text, "price_text": price_text})
-        i += 4
-
-    if not rows and initial_price_num is None:
+    divs = statistiki.find_all('div', recursive=False)
+    if len(divs) < 10:
+        logger.debug(f"Недостатъчно div-ове в price history: {len(divs)}")
         return ""
 
-    for idx, r in enumerate(rows):
-        rows[idx]["dt"]         = parse_bg_datetime(r["date"])
-        rows[idx]["price_num"]  = parse_price_number(r["price_text"])
-        rows[idx]["change_num"] = parse_change_number(r["change"])
+    def clean(el):
+        if not el:
+            return ""
+        return el.get_text(separator=" ", strip=True).replace("\xa0", " ").strip()
 
-    rows_sorted = sorted(rows, key=lambda r: r["dt"] if r["dt"] is not None else datetime.max)
-    price_nums  = [r["price_num"] for r in rows_sorted if r["price_num"] is not None]
-    if initial_price_num is None and price_nums:
-        initial_price_num = max(price_nums)
+    parts = []
+    # Пропускаме header-а (обикновено първите 4 div-а)
+    data_divs = divs[4:]
 
-    entries = []
-    if initial_price_num is not None:
-        base_str = format_eur_int(initial_price_num)
-        if base_str:
-            entries.append(f"Начална цена: {base_str.replace(' €', '')}")
+    for i in range(0, len(data_divs), 4):
+        if i + 2 >= len(data_divs):
+            break
+        date_txt = clean(data_divs[i])
+        change_txt = clean(data_divs[i + 1])
+        price_txt = clean(data_divs[i + 2])
 
-    for r in rows_sorted:
-        new_price_num = None
-        if r["price_num"] is not None:
-            new_price_num = r["price_num"] + r["change_num"] if r["change_num"] is not None else r["price_num"]
-        price_str = format_eur_int(new_price_num) if new_price_num is not None else r["price_text"]
-        if r["change_num"] is not None and r["change_num"] != 0:
-            sign       = "-" if r["change_num"] < 0 else "+"
-            change_abs = abs(r["change_num"])
-            change_str = f"{change_abs:,}".replace(",", " ")
-            entries.append(f"{r['date']} ({sign} {change_str}) - {price_str}")
+        if not price_txt or "€" not in price_txt:
+            continue
+
+        if any(x in date_txt.lower() for x in ["начало", "начална"]):
+            parts.append(f"Начална: {price_txt}")
         else:
-            entries.append(f"{r['date']} - {price_str}")
+            # Определяне на клас за цвят спрямо промяната
+            span_class = ""
+            if "-" in change_txt:
+                span_class = ' class="price-down"'
+            elif "+" in change_txt:
+                span_class = ' class="price-up"'
 
-    return " | ".join(entries)
+            change_part = f' <span{span_class}>{change_txt}</span>' if change_txt and change_txt not in ["", "—"] else ""
+            parts.append(f"{date_txt}{change_part} → {price_txt}")
+
+    result = " | ".join(parts)
+    if result:
+        logger.info(f"Успешно извлечена история: {result[:120]}...")
+    else:
+        logger.warning("Не успях да извлека ценова история от страницата")
+
+    return result
 
 
 # ================= IMAGE DOWNLOAD =================
@@ -418,7 +389,7 @@ def download_images_from_urls(listing_url, image_urls, max_images=3):
     for i, src in enumerate(image_urls[:max_images], start=1):
         try:
             r = requests.get(src, timeout=20, headers=headers)
-            if r.status_code == 200 and len(r.content) > 10000:   # филтър за качествени снимки
+            if r.status_code == 200 and len(r.content) > 10000:  # филтър за качествени снимки
                 path = img_dir / f"{i}.jpg"
                 path.write_bytes(r.content)
                 rel = f"images/{lid}/{i}.jpg"
@@ -534,6 +505,14 @@ def scrape_site_price_histories_selenium(links):
                 page_html = driver.page_source
                 price_hist = parse_site_price_history_html(page_html)
 
+                if price_hist:
+                    logger.info(f"  ✔ История на цената: {price_hist[:150]}...")
+                    result[url]["price_history"] = price_hist
+                else:
+                    logger.warning(f"  ⚠ Няма извлечена история за {url}")
+                    # Запази поне празен string
+                    result[url]["price_history"] = ""
+
             except Exception as hist_err:
                 logger.warning(f"Price history error for {url}: {hist_err}")
 
@@ -585,15 +564,19 @@ def scrape_site_price_histories_selenium(links):
 def _fmt_price(x):
     return f"{int(round(x)):,} €".replace(",", "\u202f") if pd.notna(x) and x else "—"
 
+
 def _fmt_size(x):
     return f"{int(x)} m²" if pd.notna(x) and x else "—"
+
 
 def _fmt_pm2(x):
     return f"{int(round(x))} €/m²" if pd.notna(x) and x else "—"
 
+
 def _link_cell(href):
     if not href or pd.isna(href): return "—"
     return f'<a href="{href}" target="_blank" rel="noopener">🔗 Виж</a>'
+
 
 def _img_cell(paths_str):
     """Показва до 2 thumbnail-а от запазените снимки."""
@@ -619,20 +602,40 @@ def _build_rows(df, cols):
         cells = []
         for col_key in cols:
             val = row.get(col_key, "")
+
             if col_key == COL_LINK:
                 cells.append(f"<td>{_link_cell(val)}</td>")
+
             elif col_key == COL_PRICE:
                 cells.append(f"<td>{_fmt_price(val)}</td>")
+
             elif col_key == COL_SIZE:
                 cells.append(f"<td>{_fmt_size(val)}</td>")
+
             elif col_key == COL_PRICE_PER_SQM:
                 cells.append(f"<td>{_fmt_pm2(val)}</td>")
+
             elif col_key == COL_IMAGES:
                 cells.append(f"<td>{_img_cell(val)}</td>")
-            elif col_key == 'Price_EUR_old':
-                cells.append(f"<td class='old-price'>{_fmt_price(val)}</td>")
+
+            elif col_key == COL_SITE_PRICE_HISTORY:
+                text = str(val).strip() if pd.notna(val) else ""
+                if text and text != "—":
+                    # Вече не е необходимо да добавяме <span> тук, ако текстът съдържа HTML
+                    cells.append(f'<td><div class="history site-history">{text}</div></td>')
+                else:
+                    cells.append('<td>—</td>')
+
+            elif col_key == COL_PRICE_HISTORY:
+                text = str(val).strip() if pd.notna(val) else ""
+                if text and text != "—":
+                    cells.append(f'<td><span class="history">{text}</span></td>')
+                else:
+                    cells.append('<td>—</td>')
+
             else:
                 cells.append(f"<td>{val if pd.notna(val) and val != '' else '—'}</td>")
+
         rows_html.append("<tr>" + "".join(cells) + "</tr>")
     return "\n".join(rows_html)
 
@@ -643,64 +646,73 @@ def _table(df, cols, headers, css_id="", extra_class=""):
     thead = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
     tbody = _build_rows(df, cols)
     id_attr = f' id="{css_id}"' if css_id else ""
-    cls     = f'data-table {extra_class}'.strip()
+    cls = f'data-table {extra_class}'.strip()
     return f'<table{id_attr} class="{cls}"><thead>{thead}</thead><tbody>{tbody}</tbody></table>'
 
 
 def generate_html(df_input: pd.DataFrame, now_str: str):
     """Generate docs/index.html from the full history dataframe."""
 
-    cutoff = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
-
     # ── Derive sections ───────────────────────────────────────────────────────
     df_active = df_input[~df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
-    if COL_FIRST_SEEN in df_all.columns and not df_all.empty:
-        df_new10 = df_active[df_active[COL_FIRST_SEEN].fillna("") >= cutoff].copy()
-    else:
-        df_new10 = df_active[df_active[COL_SCRAPED_DATE].fillna("") >= cutoff].copy()
+    df_new_all = df_active.copy()
 
     if not df_active.empty and COL_PRICE_HISTORY in df_active.columns:
-        mask_changed = (
-            df_active[COL_PRICE_HISTORY].fillna("").str.contains(" → ") &
-            (df_active[COL_SCRAPED_DATE].fillna("") >= cutoff)
-        )
-        df_changed10 = df_active[mask_changed].copy()
+        mask_changed = df_active[COL_PRICE_HISTORY].fillna("").str.contains(" → ")
+        df_changed_all = df_active[mask_changed].copy()
     else:
-        df_changed10 = pd.DataFrame()
+        df_changed_all = pd.DataFrame()
 
     df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
 
-    n_total   = len(df_active)
-    n_changed = len(df_changed10)
-    n_sold    = len(df_sold)
+    n_total = len(df_active)
+    n_changed = len(df_changed_all)
+    n_sold = len(df_sold)
 
     if not df_active.empty:
-        df_active    = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
-    if not df_new10.empty:
-        df_new10 = df_new10.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new10.columns else COL_SCRAPED_DATE,
+        df_active = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
+    if not df_new_all.empty:
+        df_new_all = df_new_all.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
                                         ascending=False)
-    if not df_changed10.empty:
-        df_changed10 = df_changed10.sort_values(COL_SCRAPED_DATE, ascending=False)
+    if not df_changed_all.empty:
+        df_changed_all = df_changed_all.sort_values(COL_SCRAPED_DATE, ascending=False)
 
-    # ── Build tables (with images column) ────────────────────────────────────
+    # ── Build tables ─────────────────────────────────────────────────────
     new_table = _table(
-        df_new10,
-        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година", "История (сайт)", ""],
+        df_new_all,
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година",
+         "Свалена ценова история", ""],
         css_id="new-table",
+    )
+
+    changed_table = _table(
+        df_changed_all,
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
+         COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
+         "Последно виждана", "История на цената", "Свалена ценова история", ""],
+        css_id="changed-table",
     )
 
     all_table = _table(
         df_active,
-        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.", "Последно виждана", "История на цената", ""],
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
+         COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
+         "Последно виждана", "История на цената", "Свалена ценова история", ""],
         css_id="all-table",
     )
 
     sold_table = _table(
         df_sold,
-        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Последна цена", "Площ", "€/m²", "Последно виждана", "История на цената", ""],
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Последна цена", "Площ", "€/m²",
+         "Последно виждана", "История на цената", "Свалена ценова история", ""],
         css_id="sold-table",
         extra_class="sold-table",
     )
@@ -922,11 +934,17 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   /* price history cell — smaller mono */
   table.data-table td:has(.history) {{ font-size: 11px; }}
-  .history {{
+.history {{
     font-family: var(--mono);
     font-size: 11px;
-    color: var(--muted);
+    line-height: 1.35;
+    color: #a0a3c0;
   }}
+  .site-history {{
+    color: #7dd3fc;
+  }}
+  .price-down {{ color: var(--green) !important; font-weight: 600; }}
+  .price-up {{ color: var(--red) !important; font-weight: 600; }}
 
   /* thumbnail images */
   table.data-table td img {{
@@ -986,9 +1004,8 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 </div>
 
 <nav>
-  <a href="#new"     class="active">Нови</a>
+  <a href="#all"     class="active">Всички активни</a>
   <a href="#changed">Промени</a>
-  <a href="#all">Всички активни</a>
   <a href="#sold">Продадени</a>
 </nav>
 
@@ -1002,6 +1019,14 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     </div>
     <div class="table-wrap">
       {all_table}
+    </div>
+  </section>
+
+  <section id="changed">
+    <h2>Промени в цената <span class="badge">{n_changed}</span></h2>
+    <p class="section-desc">Обяви с регистрирана промяна в цената.</p>
+    <div class="table-wrap">
+      {changed_table}
     </div>
   </section>
 
@@ -1085,11 +1110,11 @@ with sync_playwright() as p:
         headless=True,
         args=["--no-sandbox", "--disable-dev-shm-usage"]
     )
-    page    = browser.new_page()
+    page = browser.new_page()
     page.set_extra_http_headers({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
-    total_ads      = None
+    total_ads = None
     items_per_page = 40
 
     try:
@@ -1099,8 +1124,10 @@ with sync_playwright() as p:
 
         html_content = page.content()
         total_ads = parse_total_ads(html_content)
-        if total_ads: logger.info(f"Total listings: {total_ads}")
-        else:         logger.warning("Could not extract total listings count")
+        if total_ads:
+            logger.info(f"Total listings: {total_ads}")
+        else:
+            logger.warning("Could not extract total listings count")
 
         parse_page(html_content, pg_num=1)
 
@@ -1140,13 +1167,12 @@ with sync_playwright() as p:
         browser.close()
         logger.info("Browser closed")
 
-
 # ================= PROCESSING =================
 if not listings:
     logger.warning("No listings scraped → exiting")
     exit()
 
-df_new      = pd.DataFrame(listings)
+df_new = pd.DataFrame(listings)
 df_sold_now = pd.DataFrame()
 
 # Selenium: price history + images
@@ -1154,6 +1180,10 @@ selenium_results = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist(
 df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("price_history", "")
 )
+# === DEBUG: проверка дали има данни ===
+num_with_history = df_new[COL_SITE_PRICE_HISTORY].str.strip().astype(bool).sum()
+logger.info(f"Извлечени ценови истории: {num_with_history} от {len(df_new)} обяви")
+
 df_new[COL_IMAGES] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("images", "")
 )
@@ -1170,7 +1200,7 @@ if os.path.exists(HISTORY_FILE):
 # Ensure all columns exist in history
 if not df_history.empty:
     df_history = deduplicate_history(df_history, COL_LINK, COL_PRICE_HISTORY)
-    df_history[COL_PRICE_HISTORY].fillna("", inplace=True)
+    df_history[COL_PRICE_HISTORY] = df_history[COL_PRICE_HISTORY].fillna("")
     for col, default in [
         (COL_SITE_PRICE_HISTORY, ""),
         (COL_SOLD, False),
@@ -1179,7 +1209,7 @@ if not df_history.empty:
     ]:
         if col not in df_history.columns:
             df_history[col] = default
-    df_history[COL_SOLD].fillna(False, inplace=True)
+    df_history[COL_SOLD] = df_history[COL_SOLD].fillna(False)
 
 df_all = df_history.copy()
 if not df_all.empty:
@@ -1213,11 +1243,12 @@ if not df_history.empty:
 
     if not changed.empty:
         def update_history(hist_row):
-            hist      = hist_row[f'{COL_PRICE_HISTORY}_old']
+            hist = hist_row[f'{COL_PRICE_HISTORY}_old']
             old_entry = format_price_history_entry(hist_row[f'{COL_PRICE}_old'], "before")
             if old_entry and old_entry not in hist:
                 return f"{hist} → {old_entry}" if hist.strip() else old_entry
             return hist
+
 
         changed[f'{COL_PRICE_HISTORY}_updated'] = changed.apply(update_history, axis=1)
         changed[f'{COL_PRICE_PER_SQM}_new'] = (
@@ -1234,21 +1265,21 @@ if not df_history.empty:
             COL_SITE_PRICE_HISTORY,
             f'{COL_PRICE_HISTORY}_updated',
         ]].rename(columns={
-            f'{COL_LOCATION}_old':          COL_LOCATION,
-            f'{COL_SIZE}_new':              COL_SIZE,
+            f'{COL_LOCATION}_old': COL_LOCATION,
+            f'{COL_SIZE}_new': COL_SIZE,
             f'{COL_PRICE_HISTORY}_updated': COL_PRICE_HISTORY,
         })
         logger.info(f"Found {len(df_changed)} price changes")
 
 # Update df_all
 for _, row in df_new.iterrows():
-    link     = row[COL_LINK]
+    link = row[COL_LINK]
     row_dict = row.to_dict()
 
     if link in df_all.index:
-        old_price        = df_all.at[link, COL_PRICE]
+        old_price = df_all.at[link, COL_PRICE]
         old_scraped_date = df_all.at[link, COL_SCRAPED_DATE]
-        new_price        = row_dict.get(COL_PRICE)
+        new_price = row_dict.get(COL_PRICE)
         new_scraped_date = TODAY
 
         # Preserve first_seen date
@@ -1267,7 +1298,7 @@ for _, row in df_new.iterrows():
 
         if pd.notna(new_price) and pd.notna(old_price) and old_price != new_price:
             current_hist = df_all.at[link, COL_PRICE_HISTORY] or ""
-            old_entry    = format_price_history_entry(old_price, old_scraped_date)
+            old_entry = format_price_history_entry(old_price, old_scraped_date)
             if old_entry and old_entry not in current_hist:
                 current_hist = f"{current_hist} → {old_entry}" if current_hist.strip() else old_entry
             new_entry = format_price_history_entry(new_price, new_scraped_date)
@@ -1278,7 +1309,7 @@ for _, row in df_new.iterrows():
         # new listing
         if pd.notna(row_dict.get(COL_PRICE)):
             row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
-        row_dict[COL_SOLD]       = False
+        row_dict[COL_SOLD] = False
         row_dict[COL_FIRST_SEEN] = TODAY
         df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
 
@@ -1308,29 +1339,29 @@ df_all.to_csv("all_listings_history.csv", index=False, encoding='utf-8-sig')
 # ================= GENERATE HTML DASHBOARD =================
 generate_html(df_all, NOW_STR)
 
-
 # ================= EXCEL EXPORT =================
 df_export = df_all.copy()
-df_export['Current Price']  = df_export[COL_PRICE].apply(lambda x: f"{int(round(x)):,} €" if pd.notna(x) else "")
-df_export['Price per m²']   = df_export[COL_PRICE_PER_SQM].apply(lambda x: f"{int(round(x)):,} €/m²" if pd.notna(x) else "")
-df_export['Size']           = df_export[COL_SIZE].apply(lambda x: f"{int(x)} m²" if pd.notna(x) else "")
+df_export['Current Price'] = df_export[COL_PRICE].apply(lambda x: f"{int(round(x)):,} €" if pd.notna(x) else "")
+df_export['Price per m²'] = df_export[COL_PRICE_PER_SQM].apply(
+    lambda x: f"{int(round(x)):,} €/m²" if pd.notna(x) else "")
+df_export['Size'] = df_export[COL_SIZE].apply(lambda x: f"{int(x)} m²" if pd.notna(x) else "")
 df_export[COL_PRICE_HISTORY] = df_export.apply(
     lambda r: append_current_if_needed(r[COL_PRICE_HISTORY], r[COL_PRICE], r[COL_SCRAPED_DATE]), axis=1
 )
 df_export = df_export.rename(columns={
-    COL_PRICE_HISTORY:      'Price History',
+    COL_PRICE_HISTORY: 'Price History',
     COL_SITE_PRICE_HISTORY: 'Site price history',
-    COL_PRICE:              'Current Price (numeric)',
-    COL_PRICE_PER_SQM:      'Price per m² (numeric)',
-    COL_SIZE:               'Size (numeric)',
-    COL_SCRAPED_DATE:       'Scraped Date',
-    COL_FIRST_SEEN:         'First Seen Date',
-    COL_LOCATION:           'Location',
-    COL_TITLE:              'Title',
-    COL_FLOOR:              'Floor',
-    COL_TOTAL_FLOORS:       'Total Floors',
-    COL_YEAR:               'Year Built',
-    COL_IMAGES:             'Image Paths',
+    COL_PRICE: 'Current Price (numeric)',
+    COL_PRICE_PER_SQM: 'Price per m² (numeric)',
+    COL_SIZE: 'Size (numeric)',
+    COL_SCRAPED_DATE: 'Scraped Date',
+    COL_FIRST_SEEN: 'First Seen Date',
+    COL_LOCATION: 'Location',
+    COL_TITLE: 'Title',
+    COL_FLOOR: 'Floor',
+    COL_TOTAL_FLOORS: 'Total Floors',
+    COL_YEAR: 'Year Built',
+    COL_IMAGES: 'Image Paths',
 })
 df_export.to_excel(excel_file, index=False, engine='openpyxl')
 
@@ -1354,13 +1385,20 @@ except Exception as e:
 
 logger.info(f"Excel saved: {excel_file}")
 
-
 # ================= EMAIL =================
 if len(df_new_only) > 0 or len(df_changed) > 0 or len(df_sold_now) > 0:
 
-    def fmt_p(x):  return f"{x:,.0f} €" if pd.notna(x) else "—"
-    def fmt_s(x):  return f"{int(x)} m²" if pd.notna(x) else "—"
-    def fmt_m(x):  return f"{int(round(x))} €/m²" if pd.notna(x) else "—"
+    def fmt_p(x):
+        return f"{x:,.0f} €" if pd.notna(x) else "—"
+
+
+    def fmt_s(x):
+        return f"{int(x)} m²" if pd.notna(x) else "—"
+
+
+    def fmt_m(x):
+        return f"{int(round(x))} €/m²" if pd.notna(x) else "—"
+
 
     CSS = """<style>
 body{font-family:Arial,sans-serif;line-height:1.6;color:#333;background:#f9f9f9}
@@ -1383,6 +1421,7 @@ a{color:#4f9cf9;text-decoration:none}
 .ftr{background:#f5f5f5;padding:12px 28px;font-size:12px;color:#999;text-align:center}
 </style>"""
 
+
     def to_html_table(df_in, cols, headers, extra_class=""):
         tbl_head = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
         tbl_rows = []
@@ -1392,21 +1431,27 @@ a{color:#4f9cf9;text-decoration:none}
                 v = email_row.get(col_name, "")
                 if col_name == COL_LINK:
                     cells.append(f"<td><a href='{v}' target='_blank'>Виж →</a></td>")
-                elif col_name == COL_PRICE:         cells.append(f"<td>{fmt_p(v)}</td>")
-                elif col_name == COL_SIZE:          cells.append(f"<td>{fmt_s(v)}</td>")
-                elif col_name == COL_PRICE_PER_SQM: cells.append(f"<td>{fmt_m(v)}</td>")
-                elif col_name == 'Price_EUR_old':   cells.append(f"<td style='text-decoration:line-through;color:#999'>{fmt_p(v)}</td>")
-                else: cells.append(f"<td>{v if pd.notna(v) and v != '' else '—'}</td>")
+                elif col_name == COL_PRICE:
+                    cells.append(f"<td>{fmt_p(v)}</td>")
+                elif col_name == COL_SIZE:
+                    cells.append(f"<td>{fmt_s(v)}</td>")
+                elif col_name == COL_PRICE_PER_SQM:
+                    cells.append(f"<td>{fmt_m(v)}</td>")
+                elif col_name == 'Price_EUR_old':
+                    cells.append(f"<td style='text-decoration:line-through;color:#999'>{fmt_p(v)}</td>")
+                else:
+                    cells.append(f"<td>{v if pd.notna(v) and v != '' else '—'}</td>")
             tbl_rows.append("<tr>" + "".join(cells) + "</tr>")
         cls = f"imot-table {extra_class}".strip()
         return f"<table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table>"
+
 
     new_section = changed_section = sold_section = ""
 
     if not df_new_only.empty:
         tbl = to_html_table(df_new_only,
-            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SITE_PRICE_HISTORY, COL_LINK],
-            ["Локация", "Цена", "Площ", "€/m²", "История (сайт)", ""])
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SITE_PRICE_HISTORY, COL_LINK],
+                            ["Локация", "Цена", "Площ", "€/m²", "История (сайт)", ""])
         new_section = f"""<h3><span class="pill new">НОВИ</span> &nbsp;{len(df_new_only)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_changed.empty:
@@ -1416,15 +1461,15 @@ a{color:#4f9cf9;text-decoration:none}
         if COL_PRICE in df_ch.columns and COL_SIZE in df_ch.columns and COL_PRICE_PER_SQM not in df_ch.columns:
             df_ch[COL_PRICE_PER_SQM] = (df_ch[COL_PRICE] / df_ch[COL_SIZE]).round(2)
         tbl = to_html_table(df_ch,
-            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_LINK],
-            ["Локация", "Нова цена", "Площ", "€/m²", "История на цената", ""])
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+                            ["Локация", "Нова цена", "Площ", "€/m²", "История на цената", "История (сайт)", ""])
         changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_sold_now.empty:
         tbl = to_html_table(df_sold_now,
-            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_LINK],
-            ["Локация", "Последна цена", "Площ", "€/m²", ""],
-            extra_class="sold-table")
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SITE_PRICE_HISTORY, COL_LINK],
+                            ["Локация", "Последна цена", "Площ", "€/m²", "История (сайт)", ""],
+                            extra_class="sold-table")
         sold_section = f"""<h3><span class="pill sld">ПРОДАДЕНИ</span> &nbsp;{len(df_sold_now)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     subject_parts = []
@@ -1451,8 +1496,8 @@ a{color:#4f9cf9;text-decoration:none}
 </body></html>"""
 
     msg = MIMEMultipart()
-    msg['From']    = SENDER_EMAIL
-    msg['To']      = ", ".join(RECEIVERS)
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = ", ".join(RECEIVERS)
     msg['Subject'] = subject
     msg.attach(MIMEText(email_html, "html", _charset="utf-8"))
 
