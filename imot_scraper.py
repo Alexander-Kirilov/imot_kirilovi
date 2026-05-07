@@ -46,20 +46,19 @@ excel_file = f"imot_bg_scraping_{timestamp}.xlsx"
 # ── Email ─────────────────────────────────────────────────────────────────────
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "a.kirilov74@gmail.com")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 if not SENDER_PASSWORD:
     logger.error("GMAIL_APP_PASSWORD secret is not set!")
 
 # Списък с получатели от променлива на средата (разделени със запетая)
-RECEIVERS_RAW = os.environ.get("RECEIVERS", "a.kirilov74@gmail.com,hristina.padeva@gmail.com")
+RECEIVERS_RAW = os.environ.get("RECEIVERS")
 RECEIVERS = [r.strip() for r in RECEIVERS_RAW.split(",") if r.strip()]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
 # Линкът за търсене вече се взима от променлива на средата
 base_url = os.environ.get(
     "BASE_URL",
-    'https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen?type_home=4~5~&kv_min=89&kv_max=90&price_max=280000&floor_from=8&floor_to=8&raioni=45~46~47~48~&ybuild_type=1'
 )
 
 listings = []
@@ -242,9 +241,6 @@ def deduplicate_history(df, link_col, price_history_col):
 
 
 def parse_site_price_history_html(raw_html):
-    """
-    Надеждно парсване на ценовата история от imot.bg
-    """
     if not raw_html or len(raw_html) < 100:
         return ""
 
@@ -288,7 +284,6 @@ def parse_site_price_history_html(raw_html):
         if any(x in date_txt.lower() for x in ["начало", "начална"]):
             parts.append(f"Начална: {price_txt}")
         else:
-            # Определяне на клас за цвят спрямо промяната
             span_class = ""
             if "-" in change_txt:
                 span_class = ' class="price-down"'
@@ -315,7 +310,7 @@ def get_listing_id_from_url(url):
     return match.group(1) if match else None
 
 
-def extract_images_improved(page, listing_url, max_images=3):
+def extract_images_improved(page, listing_url, max_images=2):
     urls = []
     listing_id = get_listing_id_from_url(listing_url)
 
@@ -326,7 +321,6 @@ def extract_images_improved(page, listing_url, max_images=3):
     try:
         page.wait_for_timeout(1500)
 
-        # Агресивно зареждане на галерията
         for _ in range(5):
             page.mouse.wheel(0, 1000)
             page.wait_for_timeout(500)
@@ -374,7 +368,7 @@ def extract_images_improved(page, listing_url, max_images=3):
         return urls
 
 
-def download_images_from_urls(listing_url, image_urls, max_images=3):
+def download_images_from_urls(listing_url, image_urls, max_images=2):
     if not image_urls:
         logger.warning(f"No valid images found for {listing_url}")
         return ""
@@ -404,12 +398,6 @@ def download_images_from_urls(listing_url, image_urls, max_images=3):
 # ================= SELENIUM + PLAYWRIGHT: PRICE HISTORY + IMAGES =================
 
 def scrape_site_price_histories_selenium(links):
-    """
-    Обновена версия:
-      - По-добро извличане на снимки
-      - Филтрира обяви без снимки (ако искаш)
-      - Почистване на "никакви" обяви
-    """
     if not links:
         return {}
 
@@ -465,7 +453,7 @@ def scrape_site_price_histories_selenium(links):
                     EC.presence_of_element_located((By.ID, "priceHistory2"))
                 )
 
-                # imot.bg зарежда history-то чрез JS
+                # зарежда history-то чрез JS
                 try:
                     title_span = price_history_elem.find_element(
                         By.CSS_SELECTOR,
@@ -529,10 +517,10 @@ def scrape_site_price_histories_selenium(links):
                 p_page.wait_for_load_state("networkidle", timeout=10000)
 
                 # === ТОВА Е ВАЖНОТО ===
-                image_urls = extract_images_improved(p_page, url, max_images=6)
+                image_urls = extract_images_improved(p_page, url, max_images=2)
 
                 if image_urls:
-                    img_paths = download_images_from_urls(url, image_urls, max_images=3)
+                    img_paths = download_images_from_urls(url, image_urls, max_images=2)
                     if img_paths:
                         logger.info(f"  → {len(img_paths.split(','))} снимки свалени")
                     else:
@@ -621,7 +609,6 @@ def _build_rows(df, cols):
             elif col_key == COL_SITE_PRICE_HISTORY:
                 text = str(val).strip() if pd.notna(val) else ""
                 if text and text != "—":
-                    # Вече не е необходимо да добавяме <span> тук, ако текстът съдържа HTML
                     cells.append(f'<td><div class="history site-history">{text}</div></td>')
                 else:
                     cells.append('<td>—</td>')
@@ -651,7 +638,6 @@ def _table(df, cols, headers, css_id="", extra_class=""):
 
 
 def generate_html(df_input: pd.DataFrame, now_str: str):
-    """Generate docs/index.html from the full history dataframe."""
 
     # ── Derive sections ───────────────────────────────────────────────────────
     df_active = df_input[~df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
