@@ -1,23 +1,26 @@
-# Resync schedule - 08.05.2026
 name: Imot.bg Scraper
 
 on:
   schedule:
     - cron: '0 4 * * *'    # 07:00 BG
     - cron: '0 10 * * *'   # 13:00 BG
-    - cron: '25 8 * * *'
+    - cron: '40 8 * * *' # ← за тестване (можеш да го оставиш или да го махнеш)
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
+
     env:
       TZ: Europe/Sofia
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # важно за стабилен git push
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,7 +32,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install "pyarrow>=15.0.0"
-          
 
       # === Playwright Setup ===
       - name: Cache Playwright
@@ -50,7 +52,7 @@ jobs:
             libgtk-3-0t64 libxshmfence1 fonts-liberation
 
       - name: Install Playwright Browsers
-        run: python -m playwright install chromium
+        run: python -m playwright install chromium --with-deps
 
       - name: Run scraper
         env:
@@ -61,9 +63,10 @@ jobs:
           RECEIVERS: ${{ secrets.RECEIVERS }}
         run: python imot_scraper.py
 
-      # ← ДОБАВИ ТАЗИ СТЪПКА
       - name: Debug - check files
         run: |
+          echo "=== Current directory ==="
+          ls -la
           echo "=== docs folder ==="
           ls -la docs/ || echo "ГРЕШКА: docs папката не съществува"
           echo "=== git status ==="
@@ -75,9 +78,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           git add docs/index.html docs/images/ all_listings_history.parquet *.xlsx *.log 2>/dev/null || true
+          
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Автоматично обновяване: $(date +'%d.%m.%Y %H:%M')"
+            git commit -m "Автоматично обновяване: $(date +'%d.%m.%Y %H:%M %Z')"
             git push
           fi
