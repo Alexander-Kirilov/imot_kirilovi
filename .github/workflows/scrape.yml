@@ -2,18 +2,14 @@ name: Imot.bg Scraper
 
 on:
   schedule:
-    - cron: '0 4 * * *'    # 07:00 BG
-    - cron: '0 10 * * *'   # 13:00 BG
-    - cron: '05 9 * * *' # ← за тестване (можеш да го оставиш или да го махнеш)
+    - cron: '0 4 * * *'    # 07:00 BG време
+    - cron: '0 10 * * *'   # 13:00 BG време
   workflow_dispatch:
-  push: # ← Добави това временно
-    paths:
-       - '.github/workflows/scrape.yml'
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: write
 
@@ -23,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0        # важно за стабилен git push
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
