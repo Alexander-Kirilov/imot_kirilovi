@@ -4,8 +4,11 @@ on:
   schedule:
     - cron: '0 4 * * *'    # 07:00 BG
     - cron: '0 10 * * *'   # 13:00 BG
-    - cron: '30 8 * * *' # ← за тестване (можеш да го оставиш или да го махнеш)
+    - cron: '05 9 * * *' # ← за тестване (можеш да го оставиш или да го махнеш)
   workflow_dispatch:
+  push: # ← Добави това временно
+    paths:
+       - '.github/workflows/scrape.yml'
 
 jobs:
   scrape:
