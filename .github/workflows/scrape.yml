@@ -3,15 +3,14 @@ name: Imot.bg Scraper
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # на всеки 15 минути (за тестване)
     - cron: '0 4 * * *'    # 07:00 BG
     - cron: '0 10 * * *'   # 13:00 BG
+    - cron: '25 8 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
     permissions:
       contents: write
     env:
