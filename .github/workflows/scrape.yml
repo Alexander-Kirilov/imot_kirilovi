@@ -1,7 +1,9 @@
+# Resync schedule - 08.05.2026
 name: Imot.bg Scraper
 
 on:
   schedule:
+    - cron: '*/15 * * * *'   # на всеки 15 минути (за тестване)
     - cron: '0 4 * * *'    # 07:00 BG
     - cron: '0 10 * * *'   # 13:00 BG
   workflow_dispatch:
