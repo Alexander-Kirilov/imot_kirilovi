@@ -2,22 +2,37 @@ name: Imot.bg Scraper
 
 on:
   schedule:
-    - cron: '0 4 * * *'    # 07:00 BG време
-    - cron: '0 10 * * *'   # 13:00 BG време
+    # 07:07 Българско време (лято UTC+3)
+    - cron: '7 3 * * *'
+
+    # 13:17 Българско време (лято UTC+3)
+    - cron: '17 10 * * *'
+    - cron: '45 5 * * *'
   workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: imot-scraper
+  cancel-in-progress: false
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     permissions:
       contents: write
 
     env:
       TZ: Europe/Sofia
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -32,7 +47,7 @@ jobs:
           pip install -r requirements.txt
           pip install "pyarrow>=15.0.0"
 
-      # === Playwright Setup ===
+      # === Playwright Cache ===
       - name: Cache Playwright
         uses: actions/cache@v4
         id: playwright-cache
@@ -42,42 +57,65 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
 
+      # === System Dependencies ===
       - name: Install Playwright System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxdamage1 \
-            libxrandr2 libgbm1 libxkbcommon0 libasound2t64 libatspi2.0-0 \
-            libgtk-3-0t64 libxshmfence1 fonts-liberation
+            libnss3 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libgbm1 \
+            libxkbcommon0 \
+            libasound2t64 \
+            libatspi2.0-0 \
+            libgtk-3-0t64 \
+            libxshmfence1 \
+            fonts-liberation
 
+      # === Install Chromium only if missing ===
       - name: Install Playwright Browsers
-        run: python -m playwright install chromium --with-deps
+        run: |
+          if [ ! -d "$PLAYWRIGHT_BROWSERS_PATH" ] || [ -z "$(ls -A $PLAYWRIGHT_BROWSERS_PATH)" ]; then
+            echo "Installing Playwright Chromium..."
+            python -m playwright install chromium --with-deps
+          else
+            echo "Playwright browser cache found"
+          fi
 
+      # === Run Scraper ===
       - name: Run scraper
         env:
-          PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BASE_URL: ${{ secrets.BASE_URL }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           RECEIVERS: ${{ secrets.RECEIVERS }}
-        run: python imot_scraper.py
+        run: |
+          python imot_scraper.py
 
+      # === Debug ===
       - name: Debug - check files
         run: |
           echo "=== Current directory ==="
           ls -la
+
           echo "=== docs folder ==="
-          ls -la docs/ || echo "ГРЕШКА: docs папката не съществува"
+          ls -la docs/ || echo "ERROR: docs folder missing"
+
           echo "=== git status ==="
           git status
 
+      # === Commit & Push ===
       - name: Commit & Push results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           git add docs/index.html docs/images/ all_listings_history.parquet *.xlsx *.log 2>/dev/null || true
-          
+
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
