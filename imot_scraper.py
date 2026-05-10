@@ -329,7 +329,8 @@ def extract_images_improved(page, listing_url, max_images=2):
         images = page.query_selector_all("img.carouselimg")
 
         # Събираме кандидатите с техния номер от alt="... изображение N"
-        candidates = []
+        candidates_with_id = []
+        candidates_fallback = []
         for img in images:
             try:
                 data_src_gallery = img.get_attribute("data-src-gallery")
@@ -337,18 +338,23 @@ def extract_images_improved(page, listing_url, max_images=2):
                 src = img.get_attribute("src")
                 alt = img.get_attribute("alt") or ""
 
-                # Приоритет: data-src-gallery > data-src > src
                 candidate = data_src_gallery or data_src or src
 
                 if candidate and ("imotstatic" in candidate or "cdn" in candidate or "focus.bg" in candidate):
+                    m = re.search(r'изображение\s+(\d+)', alt, re.IGNORECASE)
+                    order = int(m.group(1)) if m else 9999
 
                     if listing_id in candidate:
-                        # Извличаме номера от alt напр. "изображение 1", "изображение 2"
-                        m = re.search(r'изображение\s+(\d+)', alt, re.IGNORECASE)
-                        order = int(m.group(1)) if m else 9999
-                        candidates.append((order, candidate))
+                        candidates_with_id.append((order, candidate))
+                    else:
+                        candidates_fallback.append((order, candidate))
             except:
                 continue
+
+        # Ако точните съвпадения има – ползваме тях, иначе – fallback без ID
+        candidates = candidates_with_id if candidates_with_id else candidates_fallback
+        if candidates_fallback and not candidates_with_id:
+            logger.info(f"  ℹ listing_id not in CDN URLs, using fallback images for {listing_id}")
 
         # Сортираме по номер → изображение 1 първо, изображение 2 второ и т.н.
         candidates.sort(key=lambda x: x[0])
@@ -501,8 +507,23 @@ def scrape_site_price_histories_selenium(links):
                     # Запази поне празен string
                     result[url]["price_history"] = ""
 
+
             except Exception as hist_err:
                 logger.warning(f"Price history error for {url}: {hist_err}")
+                # Ако е Chrome crash (празен Message:), рестартираме driver-а
+                if "Message:" in str(hist_err) and len(str(hist_err).strip()) < 20:
+                    logger.warning("  Chrome crash detected – restarting Selenium driver")
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    try:
+                        driver = webdriver.Chrome(options=options)
+                        wait = WebDriverWait(driver, 10)
+                        logger.info("  ✔ Selenium driver restarted")
+                    except Exception as restart_err:
+                        logger.error(f"  Could not restart driver: {restart_err}")
+                        driver = None
 
         # ================= IMAGES (Playwright) =================
         img_paths = ""
@@ -512,13 +533,8 @@ def scrape_site_price_histories_selenium(links):
                 p_page.set_extra_http_headers({
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 })
-
                 p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                p_page.wait_for_load_state("networkidle", timeout=10000)
-
-                # === ТОВА Е ВАЖНОТО ===
                 image_urls = extract_images_improved(p_page, url, max_images=2)
-
                 if image_urls:
                     img_paths = download_images_from_urls(url, image_urls, max_images=2)
                     if img_paths:
