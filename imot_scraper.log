@@ -13648,3 +13648,735 @@ Call log:
 2026-05-10 20:11:31,016 | INFO    | Excel saved: imot_bg_scraping_20260510_1923.xlsx
 2026-05-10 20:11:32,612 | INFO    | ✔ Email sent
 2026-05-10 20:11:32,612 | INFO    | === Script finished ===
+2026-05-10 20:40:40,207 | INFO    | === Starting imot.bg scraper ===
+2026-05-10 20:40:40,485 | INFO    | Opening browser (headless)…
+2026-05-10 20:40:40,665 | INFO    | Loading first page: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen/do-2026?type_home=4~5~6~&kv_min=80&price_max=290000&raioni=46~47~
+2026-05-10 20:40:42,822 | INFO    | Total listings: 55
+2026-05-10 20:40:42,960 | INFO    | Scraped 40 listings from page 1
+2026-05-10 20:40:42,960 | INFO    | Planning to scrape up to 2 pages
+2026-05-10 20:40:42,960 | INFO    | Loading page 2: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen/do-2026/p-2?type_home=4~5~6~&kv_min=80&price_max=290000&raioni=46~47~
+2026-05-10 20:40:44,309 | INFO    | Scraped 15 listings from page 2
+2026-05-10 20:40:47,687 | INFO    | Loading page 3: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen/do-2026/p-3?type_home=4~5~6~&kv_min=80&price_max=290000&raioni=46~47~
+2026-05-10 20:41:00,352 | INFO    | No more listings on page 3
+2026-05-10 20:41:00,396 | INFO    | Browser closed
+2026-05-10 20:41:00,409 | INFO    | Processing 55 listings...
+2026-05-10 20:41:04,267 | INFO    | [1/55] https://www.imot.bg/obiava-1c176538018793761-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:41:18,189 | WARNING | Price history error for https://www.imot.bg/obiava-1c176538018793761-prodava-tristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:41:26,327 | INFO    |   → 2 снимки свалени
+2026-05-10 20:41:29,228 | INFO    | [2/55] https://www.imot.bg/obiava-1c177823605912602-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:41:42,686 | WARNING | Price history error for https://www.imot.bg/obiava-1c177823605912602-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:41:49,289 | INFO    |   → 1 снимки свалени
+2026-05-10 20:41:51,900 | INFO    | [3/55] https://www.imot.bg/obiava-1c176183884834550-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:41:56,082 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c176183884834550-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:42:05,478 | INFO    |   → 2 снимки свалени
+2026-05-10 20:42:08,006 | INFO    | [4/55] https://www.imot.bg/obiava-1c177159696589484-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-prof-al-t-balan
+2026-05-10 20:42:20,714 | WARNING | Price history error for https://www.imot.bg/obiava-1c177159696589484-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-prof-al-t-balan: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:42:29,315 | INFO    |   → 2 снимки свалени
+2026-05-10 20:42:32,255 | INFO    | [5/55] https://www.imot.bg/obiava-1c177790308536530-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:42:35,887 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177790308536530-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:42:44,362 | INFO    |   → 2 снимки свалени
+2026-05-10 20:42:46,387 | INFO    | [6/55] https://www.imot.bg/obiava-1c177823657161197-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:42:58,182 | WARNING | Price history error for https://www.imot.bg/obiava-1c177823657161197-prodava-tristaen-apartament-grad-sofiya-mladost-3: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:43:04,735 | INFO    |   → 1 снимки свалени
+2026-05-10 20:43:07,564 | INFO    | [7/55] https://www.imot.bg/obiava-1c176483887652608-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:43:11,282 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c176483887652608-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:43:17,147 | INFO    |   ℹ listing_id not in CDN URLs, using fallback images for 1c176483887652608
+2026-05-10 20:43:20,302 | INFO    |   → 2 снимки свалени
+2026-05-10 20:43:22,350 | INFO    | [8/55] https://www.imot.bg/obiava-1c177814586944951-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:43:24,914 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177814586944951-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:43:33,586 | INFO    |   → 2 снимки свалени
+2026-05-10 20:43:36,496 | INFO    | [9/55] https://www.imot.bg/obiava-1c177814108237265-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:43:49,272 | WARNING | Price history error for https://www.imot.bg/obiava-1c177814108237265-prodava-tristaen-apartament-grad-sofiya-mladost-3: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:43:57,453 | INFO    |   → 2 снимки свалени
+2026-05-10 20:43:59,857 | INFO    | [10/55] https://www.imot.bg/obiava-1c177735713841120-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:44:03,992 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177735713841120-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:44:13,974 | INFO    |   → 2 снимки свалени
+2026-05-10 20:44:16,698 | INFO    | [11/55] https://www.imot.bg/obiava-1c177746188031498-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:44:19,600 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177746188031498-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:44:29,832 | INFO    |   → 2 снимки свалени
+2026-05-10 20:44:32,824 | INFO    | [12/55] https://www.imot.bg/obiava-1c171163168503754-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:44:45,888 | WARNING | Price history error for https://www.imot.bg/obiava-1c171163168503754-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:44:56,738 | INFO    |   → 2 снимки свалени
+2026-05-10 20:44:59,540 | INFO    | [13/55] https://www.imot.bg/obiava-1c177021045989738-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:45:04,987 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177021045989738-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:45:18,392 | INFO    |   → 2 снимки свалени
+2026-05-10 20:45:21,092 | INFO    | [14/55] https://www.imot.bg/obiava-1c172423967398278-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:45:34,550 | WARNING | Price history error for https://www.imot.bg/obiava-1c172423967398278-prodava-tristaen-apartament-grad-sofiya-mladost-3: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:45:45,692 | INFO    |   → 2 снимки свалени
+2026-05-10 20:45:48,469 | INFO    | [15/55] https://www.imot.bg/obiava-1d177746167195705-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:46:02,002 | WARNING | Price history error for https://www.imot.bg/obiava-1d177746167195705-prodava-chetiristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:46:13,214 | INFO    |   → 2 снимки свалени
+2026-05-10 20:46:15,716 | INFO    | [16/55] https://www.imot.bg/obiava-1d177547329247238-prodava-chetiristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:46:28,509 | WARNING | Price history error for https://www.imot.bg/obiava-1d177547329247238-prodava-chetiristaen-apartament-grad-sofiya-mladost-3: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:46:38,012 | INFO    |   → 2 снимки свалени
+2026-05-10 20:46:40,686 | INFO    | [17/55] https://www.imot.bg/obiava-1c177693458846906-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:46:44,051 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177693458846906-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:46:54,743 | INFO    |   → 2 снимки свалени
+2026-05-10 20:46:57,525 | INFO    | [18/55] https://www.imot.bg/obiava-1c176518903088609-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:47:09,723 | WARNING | Price history error for https://www.imot.bg/obiava-1c176518903088609-prodava-tristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:47:18,526 | INFO    |   ℹ listing_id not in CDN URLs, using fallback images for 1c176518903088609
+2026-05-10 20:47:21,678 | INFO    |   → 2 снимки свалени
+2026-05-10 20:47:24,257 | INFO    | [19/55] https://www.imot.bg/obiava-1c175145723451668-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:47:28,806 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c175145723451668-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:47:39,034 | INFO    |   → 2 снимки свалени
+2026-05-10 20:47:41,252 | INFO    | [20/55] https://www.imot.bg/obiava-1c175687968128664-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-yerusalim
+2026-05-10 20:47:46,342 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c175687968128664-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-yerusalim
+2026-05-10 20:47:57,377 | INFO    |   → 2 снимки свалени
+2026-05-10 20:48:00,213 | INFO    | [21/55] https://www.imot.bg/obiava-1c176043541247787-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:48:12,411 | WARNING | Price history error for https://www.imot.bg/obiava-1c176043541247787-prodava-tristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:48:24,658 | INFO    |   → 2 снимки свалени
+2026-05-10 20:48:26,902 | INFO    | [22/55] https://www.imot.bg/obiava-1c177485411934580-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:48:32,036 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177485411934580-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:48:45,832 | INFO    |   → 2 снимки свалени
+2026-05-10 20:48:48,815 | INFO    | [23/55] https://www.imot.bg/obiava-1c175922309708787-prodava-tristaen-apartament-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-05-10 20:48:52,095 | INFO    | Успешно извлечена история: Начална: 241 000 € | 11.02.2026г. в 15.42 ч. <span class="price-up">+ 13 700 €</span> → 254 700 €...
+2026-05-10 20:48:52,095 | INFO    |   ✔ История на цената: Начална: 241 000 € | 11.02.2026г. в 15.42 ч. <span class="price-up">+ 13 700 €</span> → 254 700 €...
+2026-05-10 20:49:02,469 | INFO    |   → 2 снимки свалени
+2026-05-10 20:49:04,855 | INFO    | [24/55] https://www.imot.bg/obiava-1c176044074804016-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:49:09,927 | INFO    | Успешно извлечена история: Начална: 257 400 € | 16.01.2026г. в 10.21 ч. <span class="price-up">+ 5 600 €</span> → 263 000 €...
+2026-05-10 20:49:09,928 | INFO    |   ✔ История на цената: Начална: 257 400 € | 16.01.2026г. в 10.21 ч. <span class="price-up">+ 5 600 €</span> → 263 000 €...
+2026-05-10 20:49:21,971 | INFO    |   → 2 снимки свалени
+2026-05-10 20:49:24,978 | INFO    | [25/55] https://www.imot.bg/obiava-1c177244009961713-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:49:38,455 | WARNING | Price history error for https://www.imot.bg/obiava-1c177244009961713-prodava-tristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:49:50,732 | INFO    |   → 2 снимки свалени
+2026-05-10 20:49:53,258 | INFO    | [26/55] https://www.imot.bg/obiava-1c177616238698162-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:49:56,351 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177616238698162-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:50:07,124 | INFO    |   → 2 снимки свалени
+2026-05-10 20:50:09,288 | INFO    | [27/55] https://www.imot.bg/obiava-1c177426681904980-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:50:23,265 | WARNING | Price history error for https://www.imot.bg/obiava-1c177426681904980-prodava-tristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:50:35,515 | INFO    |   → 2 снимки свалени
+2026-05-10 20:50:38,186 | INFO    | [28/55] https://www.imot.bg/obiava-1c176044882445414-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:50:41,288 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c176044882445414-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:50:53,125 | INFO    |   → 2 снимки свалени
+2026-05-10 20:50:55,527 | INFO    | [29/55] https://www.imot.bg/obiava-1c165840774972388-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:51:08,207 | WARNING | Price history error for https://www.imot.bg/obiava-1c165840774972388-prodava-tristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:51:16,743 | INFO    |   → 2 снимки свалени
+2026-05-10 20:51:19,614 | INFO    | [30/55] https://www.imot.bg/obiava-1c169522594139359-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:51:23,347 | INFO    | Успешно извлечена история: Начална: 199 580 € | 12.01.2024г. в 13.15 ч. <span class="price-up">+ 5 170 €</span> → 204 750 € | 15.01.2024г. в 11.25 ...
+2026-05-10 20:51:23,347 | INFO    |   ✔ История на цената: Начална: 199 580 € | 12.01.2024г. в 13.15 ч. <span class="price-up">+ 5 170 €</span> → 204 750 € | 15.01.2024г. в 11.25 ч. <span class="price-up">+ 5 ...
+2026-05-10 20:51:32,817 | INFO    |   → 2 снимки свалени
+2026-05-10 20:51:35,464 | INFO    | [31/55] https://www.imot.bg/obiava-1c175456261691767-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:51:38,583 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c175456261691767-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:51:46,490 | INFO    |   → 1 снимки свалени
+2026-05-10 20:51:49,346 | INFO    | [32/55] https://www.imot.bg/obiava-1c177567390791418-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:51:52,986 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177567390791418-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:51:59,250 | WARNING |   → Няма намерени снимки за обявата
+2026-05-10 20:52:02,125 | INFO    | [33/55] https://www.imot.bg/obiava-1c177547533880236-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:52:05,529 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177547533880236-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:52:17,498 | INFO    |   → 2 снимки свалени
+2026-05-10 20:52:19,584 | INFO    | [34/55] https://www.imot.bg/obiava-1c177305169639447-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:52:23,859 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177305169639447-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:52:33,954 | INFO    |   → 2 снимки свалени
+2026-05-10 20:52:36,577 | INFO    | [35/55] https://www.imot.bg/obiava-1c174601650165992-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:52:49,996 | WARNING | Price history error for https://www.imot.bg/obiava-1c174601650165992-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:53:01,119 | INFO    |   → 2 снимки свалени
+2026-05-10 20:53:03,699 | INFO    | [36/55] https://www.imot.bg/obiava-1c171187202009427-prodava-tristaen-apartament-grad-sofiya-mladost-2-bul-andrey-lyapchev
+2026-05-10 20:53:15,892 | WARNING | Price history error for https://www.imot.bg/obiava-1c171187202009427-prodava-tristaen-apartament-grad-sofiya-mladost-2-bul-andrey-lyapchev: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:53:25,133 | INFO    |   → 2 снимки свалени
+2026-05-10 20:53:28,075 | INFO    | [37/55] https://www.imot.bg/obiava-1c177755231295186-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:53:40,823 | WARNING | Price history error for https://www.imot.bg/obiava-1c177755231295186-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:53:51,633 | INFO    |   → 2 снимки свалени
+2026-05-10 20:53:53,968 | INFO    | [38/55] https://www.imot.bg/obiava-1c177780481435723-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:54:07,431 | WARNING | Price history error for https://www.imot.bg/obiava-1c177780481435723-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:54:16,748 | INFO    |   → 2 снимки свалени
+2026-05-10 20:54:19,658 | INFO    | [39/55] https://www.imot.bg/obiava-1c177781409280725-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:54:33,545 | WARNING | Price history error for https://www.imot.bg/obiava-1c177781409280725-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:54:43,334 | INFO    |   → 2 снимки свалени
+2026-05-10 20:54:46,310 | INFO    | [40/55] https://www.imot.bg/obiava-1c177755004572560-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:54:58,278 | WARNING | Price history error for https://www.imot.bg/obiava-1c177755004572560-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:55:09,697 | INFO    |   → 2 снимки свалени
+2026-05-10 20:55:12,381 | INFO    | [41/55] https://www.imot.bg/obiava-1c174639672082106-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:55:25,785 | WARNING | Price history error for https://www.imot.bg/obiava-1c174639672082106-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:55:37,572 | INFO    |   → 2 снимки свалени
+2026-05-10 20:55:40,624 | INFO    | [42/55] https://www.imot.bg/obiava-1c177781632846611-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:55:53,987 | WARNING | Price history error for https://www.imot.bg/obiava-1c177781632846611-prodava-tristaen-apartament-grad-sofiya-mladost-2: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:56:03,598 | INFO    |   → 2 снимки свалени
+2026-05-10 20:56:06,533 | INFO    | [43/55] https://www.imot.bg/obiava-1c177045752902523-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:56:11,107 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177045752902523-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:56:21,565 | INFO    |   → 2 снимки свалени
+2026-05-10 20:56:24,390 | INFO    | [44/55] https://www.imot.bg/obiava-1c177451145026908-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:56:28,839 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177451145026908-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:56:39,717 | INFO    |   → 2 снимки свалени
+2026-05-10 20:56:42,173 | INFO    | [45/55] https://www.imot.bg/obiava-1c175154028520693-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-sveti-kipriyan
+2026-05-10 20:56:55,871 | WARNING | Price history error for https://www.imot.bg/obiava-1c175154028520693-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-sveti-kipriyan: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:57:09,228 | INFO    |   → 2 снимки свалени
+2026-05-10 20:57:11,868 | INFO    | [46/55] https://www.imot.bg/obiava-1c176175477427979-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:57:15,433 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c176175477427979-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-05-10 20:57:25,925 | INFO    |   → 2 снимки свалени
+2026-05-10 20:57:28,531 | INFO    | [47/55] https://www.imot.bg/obiava-1c166732376234075-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-sveti-kipriyan
+2026-05-10 20:57:41,987 | WARNING | Price history error for https://www.imot.bg/obiava-1c166732376234075-prodava-tristaen-apartament-grad-sofiya-mladost-2-ul-sveti-kipriyan: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:57:54,281 | INFO    |   → 2 снимки свалени
+2026-05-10 20:57:56,859 | INFO    | [48/55] https://www.imot.bg/obiava-1c177521461301083-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:58:00,850 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177521461301083-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:58:11,241 | INFO    |   → 2 снимки свалени
+2026-05-10 20:58:13,681 | INFO    | [49/55] https://www.imot.bg/obiava-1c176822117610068-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:58:26,963 | WARNING | Price history error for https://www.imot.bg/obiava-1c176822117610068-prodava-tristaen-apartament-grad-sofiya-mladost-3: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:58:38,880 | INFO    |   → 2 снимки свалени
+2026-05-10 20:58:41,626 | INFO    | [50/55] https://www.imot.bg/obiava-1c177555849498209-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:58:54,017 | WARNING | Price history error for https://www.imot.bg/obiava-1c177555849498209-prodava-tristaen-apartament-grad-sofiya-mladost-3: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:59:01,004 | INFO    |   ℹ listing_id not in CDN URLs, using fallback images for 1c177555849498209
+2026-05-10 20:59:03,701 | INFO    |   → 2 снимки свалени
+2026-05-10 20:59:06,575 | INFO    | [51/55] https://www.imot.bg/obiava-1d175735790439098-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:59:11,436 | INFO    | Успешно извлечена история: Начална: 210 000 € | 11.11.2025г. в 20.59 ч. <span class="price-down">- 10 001 €</span> → 199 999 €...
+2026-05-10 20:59:11,436 | INFO    |   ✔ История на цената: Начална: 210 000 € | 11.11.2025г. в 20.59 ч. <span class="price-down">- 10 001 €</span> → 199 999 €...
+2026-05-10 20:59:24,667 | INFO    |   → 2 снимки свалени
+2026-05-10 20:59:27,320 | INFO    | [52/55] https://www.imot.bg/obiava-1d176339758338442-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-05-10 20:59:39,832 | WARNING | Price history error for https://www.imot.bg/obiava-1d176339758338442-prodava-chetiristaen-apartament-grad-sofiya-mladost-1: Message: 
+Stacktrace:
+#0 0x55c240572b6a <unknown>
+#1 0x55c23ff74265 <unknown>
+#2 0x55c23ffc6f76 <unknown>
+#3 0x55c23ffc71b1 <unknown>
+#4 0x55c2400127d4 <unknown>
+#5 0x55c24000f969 <unknown>
+#6 0x55c23ffba5cf <unknown>
+#7 0x55c23ffbb391 <unknown>
+#8 0x55c24053804b <unknown>
+#9 0x55c24053b00d <unknown>
+#10 0x55c240524808 <unknown>
+#11 0x55c24053bba0 <unknown>
+#12 0x55c24050b280 <unknown>
+#13 0x55c24055fdb8 <unknown>
+#14 0x55c24055ff88 <unknown>
+#15 0x55c2405715de <unknown>
+#16 0x7f8be709caa4 <unknown>
+#17 0x7f8be7129c6c <unknown>
+
+2026-05-10 20:59:48,897 | INFO    |   → 2 снимки свалени
+2026-05-10 20:59:51,029 | INFO    | [53/55] https://www.imot.bg/obiava-1d177556013475778-prodava-chetiristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 20:59:54,816 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1d177556013475778-prodava-chetiristaen-apartament-grad-sofiya-mladost-3
+2026-05-10 21:00:06,312 | INFO    |   → 2 снимки свалени
+2026-05-10 21:00:08,556 | INFO    | [54/55] https://www.imot.bg/obiava-1f177625951171901-prodava-mezonet-grad-sofiya-mladost-1
+2026-05-10 21:00:13,156 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1f177625951171901-prodava-mezonet-grad-sofiya-mladost-1
+2026-05-10 21:00:25,800 | INFO    |   → 2 снимки свалени
+2026-05-10 21:00:28,232 | INFO    | [55/55] https://www.imot.bg/obiava-1f177312693855767-prodava-mezonet-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-05-10 21:00:31,654 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1f177312693855767-prodava-mezonet-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-05-10 21:00:43,540 | INFO    |   → 2 снимки свалени
+2026-05-10 21:00:46,927 | INFO    | Finished. Good listings with images: 0/55
+2026-05-10 21:00:46,930 | INFO    | Извлечени ценови истории: 4 от 55 обяви
+2026-05-10 21:00:46,947 | INFO    | Loaded history: 155 rows
+2026-05-10 21:00:47,026 | INFO    | New: 0  |  Changed: 0  |  Sold: 55  |  Total unique: 155
+2026-05-10 21:00:47,057 | INFO    | HTML dashboard written to docs/index.html
+2026-05-10 21:00:47,280 | INFO    | Excel saved: imot_bg_scraping_20260510_2040.xlsx
+2026-05-10 21:00:50,742 | INFO    | ✔ Email sent
+2026-05-10 21:00:50,743 | INFO    | === Script finished ===
