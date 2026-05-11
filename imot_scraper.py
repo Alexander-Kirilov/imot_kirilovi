@@ -1391,16 +1391,24 @@ logger.info(f"Excel saved: {excel_file}")
 if len(df_new_only) > 0 or len(df_changed) > 0 or len(df_sold_now) > 0:
 
     def fmt_p(x):
-        return f"{x:,.0f} €" if pd.notna(x) else "—"
+        try:
+            return f"{float(x):,.0f} €" if pd.notna(x) and x != "" else "—"
+        except (ValueError, TypeError):
+            return str(x) if x else "—"
 
 
     def fmt_s(x):
-        return f"{int(x)} m²" if pd.notna(x) else "—"
+        try:
+            return f"{int(float(x))} m²" if pd.notna(x) and x != "" else "—"
+        except (ValueError, TypeError):
+            return str(x) if x else "—"
 
 
     def fmt_m(x):
-        return f"{int(round(x))} €/m²" if pd.notna(x) else "—"
-
+        try:
+            return f"{int(round(float(x)))} €/m²" if pd.notna(x) and x != "" else "—"
+        except (ValueError, TypeError):
+            return str(x) if x else "—"
 
     CSS = """<style>
 body{font-family:Arial,sans-serif;line-height:1.6;color:#333;background:#f9f9f9}
