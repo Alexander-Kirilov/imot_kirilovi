@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+import hashlib
 import logging
 import time
 import random
@@ -12,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 from pathlib import Path
 
@@ -383,18 +384,39 @@ def download_images_from_urls(listing_url, image_urls, max_images=2):
     img_dir = IMAGES_DIR / lid
     img_dir.mkdir(parents=True, exist_ok=True)
 
+    # Хешове на вече свалените снимки за тази обява
+    existing_hashes = set()
+    for existing in img_dir.glob("*.jpg"):
+        try:
+            existing_hashes.add(hashlib.md5(existing.read_bytes()).hexdigest())
+        except Exception:
+            pass
+
     saved = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
     for i, src in enumerate(image_urls[:max_images], start=1):
         try:
+            path = img_dir / f"{i}.jpg"
+
+            # Вече съществува — добавяме без ново сваляне
+            if path.exists():
+                saved.append(f"images/{lid}/{i}.jpg")
+                logger.debug(f"✓ Already exists, skipping image {i} for {lid}")
+                continue
+
             r = requests.get(src, timeout=20, headers=headers)
-            if r.status_code == 200 and len(r.content) > 10000:  # филтър за качествени снимки
-                path = img_dir / f"{i}.jpg"
+            if r.status_code == 200 and len(r.content) > 10000:
+                img_hash = hashlib.md5(r.content).hexdigest()
+
+                if img_hash in existing_hashes:
+                    logger.debug(f"⟳ Duplicate image (hash match), skipping {i} for {lid}")
+                    continue
+
                 path.write_bytes(r.content)
-                rel = f"images/{lid}/{i}.jpg"
-                saved.append(rel)
-                logger.debug(f"✓ Downloaded correct image {i} for {listing_url}")
+                existing_hashes.add(img_hash)
+                saved.append(f"images/{lid}/{i}.jpg")
+                logger.debug(f"✓ Downloaded image {i} for {lid}")
         except Exception as ex:
             logger.debug(f"Download failed: {ex}")
 
