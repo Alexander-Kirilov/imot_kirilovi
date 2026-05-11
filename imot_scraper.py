@@ -395,11 +395,10 @@ def download_images_from_urls(listing_url, image_urls, max_images=2):
     saved = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
+    new_count = 0
     for i, src in enumerate(image_urls[:max_images], start=1):
         try:
             path = img_dir / f"{i}.jpg"
-
-            # Вече съществува — добавяме без ново сваляне
             if path.exists():
                 saved.append(f"images/{lid}/{i}.jpg")
                 logger.debug(f"✓ Already exists, skipping image {i} for {lid}")
@@ -408,19 +407,18 @@ def download_images_from_urls(listing_url, image_urls, max_images=2):
             r = requests.get(src, timeout=20, headers=headers)
             if r.status_code == 200 and len(r.content) > 10000:
                 img_hash = hashlib.md5(r.content).hexdigest()
-
                 if img_hash in existing_hashes:
                     logger.debug(f"⟳ Duplicate image (hash match), skipping {i} for {lid}")
                     continue
-
                 path.write_bytes(r.content)
                 existing_hashes.add(img_hash)
                 saved.append(f"images/{lid}/{i}.jpg")
+                new_count += 1
                 logger.debug(f"✓ Downloaded image {i} for {lid}")
         except Exception as ex:
             logger.debug(f"Download failed: {ex}")
 
-    return ",".join(saved) if saved else ""
+    return ",".join(saved) if saved else "", new_count
 
 
 # ================= SELENIUM + PLAYWRIGHT: PRICE HISTORY + IMAGES =================
@@ -531,9 +529,10 @@ def scrape_site_price_histories_selenium(links):
 
 
             except Exception as hist_err:
-                logger.warning(f"Price history error for {url}: {hist_err}")
-                # Ако е Chrome crash (празен Message:), рестартираме driver-а
-                if "Message:" in str(hist_err) and len(str(hist_err).strip()) < 20:
+                first_line = str(hist_err).splitlines()[0].strip() or "Chrome crash (empty message)"
+                logger.warning(f"  ⚠ Ценова история неуспешна: {first_line}")
+                logger.debug(f"  Full error for {url}:\n{hist_err}")  # пълният stacktrace само при DEBUG
+                if "Message:" in str(hist_err) and str(hist_err).strip().startswith("Message:"):
                     logger.warning("  Chrome crash detected – restarting Selenium driver")
                     try:
                         driver.quit()
@@ -558,9 +557,13 @@ def scrape_site_price_histories_selenium(links):
                 p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 image_urls = extract_images_improved(p_page, url, max_images=2)
                 if image_urls:
-                    img_paths = download_images_from_urls(url, image_urls, max_images=2)
+                    img_paths, new_count = download_images_from_urls(url, image_urls, max_images=2)
                     if img_paths:
-                        logger.info(f"  → {len(img_paths.split(','))} снимки свалени")
+                        total_imgs = len(img_paths.split(','))
+                        if new_count > 0:
+                            logger.info(f"  → {new_count} нови снимки свалени ({total_imgs} общо)")
+                        else:
+                            logger.debug(f"  → {total_imgs} снимки вече съществуват, пропускам")
                     else:
                         logger.warning(f"  → Не успях да сваля снимките")
                 else:
