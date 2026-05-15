@@ -682,22 +682,31 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
     # ── Derive sections ───────────────────────────────────────────────────────
     df_active = df_input[~df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
-    df_new_all = df_active.copy()
+    df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
 
+    # Нови обяви — последните 3 дни
+    from datetime import timedelta
+    cutoff_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    if not df_active.empty and COL_FIRST_SEEN in df_active.columns:
+        df_recent = df_active[df_active[COL_FIRST_SEEN].fillna("") >= cutoff_date].copy()
+        df_recent = df_recent.sort_values(COL_FIRST_SEEN, ascending=False)
+    else:
+        df_recent = pd.DataFrame()
+
+    # Променени цени
     if not df_active.empty and COL_PRICE_HISTORY in df_active.columns:
         mask_changed = df_active[COL_PRICE_HISTORY].fillna("").str.contains(" → ")
         df_changed_all = df_active[mask_changed].copy()
     else:
         df_changed_all = pd.DataFrame()
 
-    df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
-
     n_total = len(df_active)
+    n_recent = len(df_recent)
     n_changed = len(df_changed_all)
     n_sold = len(df_sold)
 
+    # ── Sorting logic for All Active ─────────────────────────────────────
     if not df_active.empty:
-        # Броим колко ценови промени има всяка обява (брой " → " сепаратори + 1)
         def _hist_depth(h):
             if not isinstance(h, str) or not h.strip():
                 return 0
@@ -709,30 +718,29 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         df_m2   = df_active[is_m2].sort_values("_hist_depth", ascending=False)
         df_rest = df_active[~is_m2].sort_values(COL_SCRAPED_DATE, ascending=False)
         df_active = pd.concat([df_m2, df_rest], ignore_index=True).drop(columns=["_hist_depth"])
-    if not df_new_all.empty:
-        df_new_all = df_new_all.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
-                                        ascending=False)
+
     if not df_changed_all.empty:
         df_changed_all = df_changed_all.sort_values(COL_SCRAPED_DATE, ascending=False)
 
-    # ── Build tables ─────────────────────────────────────────────────────
-    new_table = _table(
-        df_new_all,
-        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година",
-         "Свалена ценова история", ""],
-        css_id="new-table",
-    )
+    # ── Table Builder ─────────────────────────────────────────────────────
+    def _table(df, cols, headers, css_id="", extra_class=""):
+        if df.empty:
+            return '<p class="empty-note">Няма данни за показване.</p>'
+        thead = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
+        tbody = _build_rows(df, cols)
+        id_attr = f' id="{css_id}"' if css_id else ""
+        cls = f'data-table {extra_class}'.strip()
+        return f'<table{id_attr} class="{cls}"><thead>{thead}</thead><tbody>{tbody}</tbody></table>'
 
-    changed_table = _table(
-        df_changed_all,
+    # Таблици
+    recent_table = _table(
+        df_recent,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
-         COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN,
+         COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Последно виждана", "История на цената", "Свалена ценова история", ""],
-        css_id="changed-table",
+         "Първо видяна", "Свалена история", ""],
+        css_id="recent-table",
     )
 
     all_table = _table(
@@ -741,8 +749,18 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
          COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
          COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Последно виждана", "История на цената", "Свалена ценова история", ""],
+         "Последно", "История", "Сайт история", ""],
         css_id="all-table",
+    )
+
+    changed_table = _table(
+        df_changed_all,
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
+         COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
+         "Последно", "История", "Сайт история", ""],
+        css_id="changed-table",
     )
 
     sold_table = _table(
@@ -750,7 +768,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
          COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Последна цена", "Площ", "€/m²",
-         "Последно виждана", "История на цената", "Свалена ценова история", ""],
+         "Последно", "История", "Сайт история", ""],
         css_id="sold-table",
         extra_class="sold-table",
     )
@@ -789,7 +807,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     line-height: 1.6;
   }}
 
-  /* ── Header ── */
   header {{
     padding: 28px 32px 20px;
     border-bottom: 1px solid var(--border);
@@ -802,7 +819,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     font-size: 22px;
     font-weight: 600;
     letter-spacing: -0.5px;
-    color: var(--text);
   }}
   header h1 span {{ color: var(--accent); }}
   .updated {{
@@ -812,7 +828,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     margin-left: auto;
   }}
 
-  /* ── Stats bar ── */
   .stats {{
     display: flex;
     gap: 1px;
@@ -832,7 +847,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     line-height: 1;
     color: var(--accent);
   }}
-  .stat-num.green  {{ color: var(--green); }}
   .stat-num.orange {{ color: var(--orange); }}
   .stat-num.red    {{ color: var(--red); }}
   .stat-label {{
@@ -843,7 +857,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     margin-top: 4px;
   }}
 
-  /* ── Nav tabs ── */
   nav {{
     padding: 0 32px;
     border-bottom: 1px solid var(--border);
@@ -860,31 +873,20 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     text-decoration: none;
     border-bottom: 2px solid transparent;
     white-space: nowrap;
-    transition: color 0.15s, border-color 0.15s;
   }}
-  nav a:hover  {{ color: var(--text); border-color: var(--border); }}
+  nav a:hover  {{ color: var(--text); }}
   nav a.active {{ color: var(--accent); border-color: var(--accent); }}
 
-  /* ── Sections ── */
   main {{ padding: 0 32px 48px; }}
   section {{ padding-top: 36px; display: none; }}
   section.active-section {{ display: block; }}
   section h2 {{
     font-size: 15px;
     font-weight: 600;
-    color: var(--text);
     margin-bottom: 4px;
     display: flex;
     align-items: center;
     gap: 10px;
-  }}
-  section h2 .badge {{
-    font-family: var(--mono);
-    font-size: 11px;
-    padding: 1px 8px;
-    border-radius: 99px;
-    background: var(--border);
-    color: var(--muted);
   }}
   .section-desc {{
     font-size: 12px;
@@ -892,7 +894,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     margin-bottom: 16px;
   }}
 
-  /* ── Search bar ── */
   .search-wrap {{
     margin-bottom: 12px;
   }}
@@ -904,15 +905,11 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text);
-    font-family: var(--sans);
     font-size: 13px;
     outline: none;
-    transition: border-color 0.15s;
   }}
   .search-wrap input:focus {{ border-color: var(--accent); }}
-  .search-wrap input::placeholder {{ color: var(--muted); }}
 
-  /* ── Tables ── */
   .table-wrap {{
     overflow-x: auto;
     border: 1px solid var(--border);
@@ -923,11 +920,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     border-collapse: collapse;
     font-size: 13px;
   }}
-  table.data-table thead {{
-    position: sticky;
-    top: 0;
-    z-index: 1;
-  }}
   table.data-table th {{
     background: var(--surface);
     color: var(--muted);
@@ -937,7 +929,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     letter-spacing: 0.06em;
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
-    white-space: nowrap;
     cursor: pointer;
     user-select: none;
   }}
@@ -949,74 +940,37 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
     vertical-align: middle;
-    max-width: 280px;
-    word-break: break-word;
   }}
-  table.data-table tr:last-child td {{ border-bottom: none; }}
   table.data-table tr:hover td {{ background: #1e2130; }}
 
-  table.data-table td.old-price {{
-    color: var(--muted);
-    text-decoration: line-through;
-  }}
-
-  table.sold-table td {{ color: var(--muted); }}
-  table.sold-table td a {{ color: var(--muted); }}
-  table.sold-table img {{ opacity: 0.5; }}
-
-  table.data-table a {{
-    color: var(--accent);
-    text-decoration: none;
-    font-weight: 600;
-  }}
+  table.data-table a {{ color: var(--accent); text-decoration: none; }}
   table.data-table a:hover {{ text-decoration: underline; }}
 
-  /* price history cell — smaller mono */
-  table.data-table td:has(.history) {{ font-size: 11px; }}
-.history {{
+  .history {{
     font-family: var(--mono);
     font-size: 11px;
     line-height: 1.35;
     color: #a0a3c0;
   }}
-  .site-history {{
-    color: #7dd3fc;
-  }}
-  .price-down {{ color: var(--green) !important; font-weight: 600; }}
-  .price-up {{ color: var(--red) !important; font-weight: 600; }}
+  .site-history {{ color: #7dd3fc; }}
+  .price-down {{ color: var(--green) !important; }}
+  .price-up {{ color: var(--red) !important; }}
 
-  /* thumbnail images */
   table.data-table td img {{
-    border: 1px solid var(--border);
+    width: 72px;
+    height: 54px;
+    object-fit: cover;
     border-radius: 4px;
-    transition: transform 0.15s;
-  }}
-  table.data-table td img:hover {{
-    transform: scale(1.06);
+    border: 1px solid var(--border);
   }}
 
-  .empty-note {{
-    color: var(--muted);
-    font-size: 13px;
-    padding: 20px 0;
-  }}
-
-  /* ── Footer ── */
+  .empty-note {{ color: var(--muted); padding: 20px 0; }}
   footer {{
     text-align: center;
     padding: 24px;
     font-size: 12px;
     color: var(--muted);
     border-top: 1px solid var(--border);
-  }}
-
-  @media (max-width: 640px) {{
-    header {{ padding: 16px; }}
-    main   {{ padding: 0 16px 32px; }}
-    nav    {{ padding: 0 16px; }}
-    .stats {{ flex-wrap: wrap; }}
-    .stat  {{ flex: 1 1 50%; }}
-    .stat-num {{ font-size: 22px; }}
   }}
 </style>
 </head>
@@ -1033,17 +987,22 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     <div class="stat-label">Активни обяви</div>
   </div>
   <div class="stat">
+    <div class="stat-num orange">{n_recent}</div>
+    <div class="stat-label">Нови (3 дни)</div>
+  </div>
+  <div class="stat">
     <div class="stat-num orange">{n_changed}</div>
     <div class="stat-label">Промени в цена</div>
   </div>
   <div class="stat">
     <div class="stat-num red">{n_sold}</div>
-    <div class="stat-label">Продадени / свалени</div>
+    <div class="stat-label">Продадени</div>
   </div>
 </div>
 
 <nav>
-  <a data-tab="all"     class="active">Всички активни</a>
+  <a data-tab="all" class="active">Всички активни</a>
+  <a data-tab="recent">🆕 Нови</a>
   <a data-tab="changed">Промени</a>
   <a data-tab="sold">Продадени</a>
 </nav>
@@ -1052,12 +1011,22 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   <section id="all" class="active-section">
     <h2>Всички активни обяви <span class="badge">{n_total}</span></h2>
-    <p class="section-desc">Пълен списък на текущо активните обяви.</p>
     <div class="search-wrap">
-      <input type="text" id="all-search" placeholder="Търси по локация, цена, площ…" oninput="filterTable('all-table', this.value)">
+      <input type="text" id="all-search" placeholder="Търси по локация, цена..." oninput="filterTable('all-table', this.value)">
     </div>
     <div class="table-wrap">
       {all_table}
+    </div>
+  </section>
+
+  <section id="recent">
+    <h2>🆕 Нови обяви (последни 3 дни) <span class="badge">{n_recent}</span></h2>
+    <p class="section-desc">Добавени от {cutoff_date} насам. Сортирай по колони.</p>
+    <div class="search-wrap">
+      <input type="text" id="recent-search" placeholder="Търси по локация, цена..." oninput="filterTable('recent-table', this.value)">
+    </div>
+    <div class="table-wrap">
+      {recent_table}
     </div>
   </section>
 
@@ -1071,7 +1040,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   <section id="sold">
     <h2>Продадени / свалени <span class="badge">{n_sold}</span></h2>
-    <p class="section-desc">Обяви, изчезнали от сайта (вероятно продадени или свалени).</p>
+    <p class="section-desc">Обяви, които вече не са активни.</p>
     <div class="table-wrap">
       {sold_table}
     </div>
@@ -1080,28 +1049,28 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 </main>
 
 <footer>
-  Данни от imot.bg · Обновява се автоматично в 07:00 и 13:00 ч. · {now_str}
+  Данни от imot.bg · Обновява се автоматично · {now_str}
 </footer>
 
 <script>
-// ── Simple table search ──────────────────────────────────────────────────────
+// Table search
 function filterTable(tableId, query) {{
-  const tbl  = document.getElementById(tableId);
+  const tbl = document.getElementById(tableId);
   if (!tbl) return;
   const rows = tbl.querySelectorAll('tbody tr');
-  const q    = query.trim().toLowerCase();
+  const q = query.trim().toLowerCase();
   rows.forEach(r => {{
     r.style.display = q === '' || r.textContent.toLowerCase().includes(q) ? '' : 'none';
   }});
 }}
 
-// ── Sortable columns ─────────────────────────────────────────────────────────
+// Sortable columns
 document.querySelectorAll('table.data-table th').forEach((th, colIdx) => {{
   th.addEventListener('click', () => {{
     const table = th.closest('table');
     const tbody = table.querySelector('tbody');
-    const rows  = Array.from(tbody.querySelectorAll('tr'));
-    const asc   = th.classList.contains('sorted-asc');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const asc = th.classList.contains('sorted-asc');
 
     table.querySelectorAll('th').forEach(t => t.classList.remove('sorted-asc','sorted-desc'));
     th.classList.add(asc ? 'sorted-desc' : 'sorted-asc');
@@ -1109,18 +1078,16 @@ document.querySelectorAll('table.data-table th').forEach((th, colIdx) => {{
     rows.sort((a, b) => {{
       const va = a.children[colIdx]?.textContent.trim() || '';
       const vb = b.children[colIdx]?.textContent.trim() || '';
-      const na = parseFloat(va.replace(/[^\\d.]/g,''));
-      const nb = parseFloat(vb.replace(/[^\\d.]/g,''));
-      const cmp = !isNaN(na) && !isNaN(nb)
-        ? na - nb
-        : va.localeCompare(vb, 'bg');
+      const na = parseFloat(va.replace(/[^\\d.,]/g, '').replace(',', '.'));
+      const nb = parseFloat(vb.replace(/[^\\d.,]/g, '').replace(',', '.'));
+      const cmp = !isNaN(na) && !isNaN(nb) ? na - nb : va.localeCompare(vb, 'bg');
       return asc ? -cmp : cmp;
     }});
     rows.forEach(r => tbody.appendChild(r));
   }});
 }});
 
-// ── Tab navigation ───────────────────────────────────────────────────────────
+// Tab navigation
 (function () {{
   const navLinks = document.querySelectorAll('nav a[data-tab]');
   const sections = document.querySelectorAll('main section[id]');
@@ -1128,7 +1095,6 @@ document.querySelectorAll('table.data-table th').forEach((th, colIdx) => {{
   function activateTab(targetId) {{
     sections.forEach(s => s.classList.toggle('active-section', s.id === targetId));
     navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === targetId));
-    // push hash without triggering scroll
     history.replaceState(null, '', '#' + targetId);
   }}
 
@@ -1139,7 +1105,6 @@ document.querySelectorAll('table.data-table th').forEach((th, colIdx) => {{
     }});
   }});
 
-  // On load: honour the URL hash if valid, otherwise default to "all"
   const hash = location.hash.replace('#', '');
   const validIds = Array.from(sections).map(s => s.id);
   activateTab(validIds.includes(hash) ? hash : 'all');
