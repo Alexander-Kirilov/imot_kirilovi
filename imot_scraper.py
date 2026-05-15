@@ -697,7 +697,18 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     n_sold = len(df_sold)
 
     if not df_active.empty:
-        df_active = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
+        # Броим колко ценови промени има всяка обява (брой " → " сепаратори + 1)
+        def _hist_depth(h):
+            if not isinstance(h, str) or not h.strip():
+                return 0
+            return h.count(" → ") + 1
+
+        df_active["_hist_depth"] = df_active[COL_PRICE_HISTORY].apply(_hist_depth)
+        is_m2 = df_active[COL_LOCATION].fillna("").str.contains(r"Младост\s*2\b", case=False, regex=True)
+
+        df_m2   = df_active[is_m2].sort_values("_hist_depth", ascending=False)
+        df_rest = df_active[~is_m2].sort_values(COL_SCRAPED_DATE, ascending=False)
+        df_active = pd.concat([df_m2, df_rest], ignore_index=True).drop(columns=["_hist_depth"])
     if not df_new_all.empty:
         df_new_all = df_new_all.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
                                         ascending=False)
@@ -856,7 +867,8 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   /* ── Sections ── */
   main {{ padding: 0 32px 48px; }}
-  section {{ padding-top: 36px; }}
+  section {{ padding-top: 36px; display: none; }}
+  section.active-section {{ display: block; }}
   section h2 {{
     font-size: 15px;
     font-weight: 600;
@@ -1031,14 +1043,14 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 </div>
 
 <nav>
-  <a href="#all"     class="active">Всички активни</a>
-  <a href="#changed">Промени</a>
-  <a href="#sold">Продадени</a>
+  <a data-tab="all"     class="active">Всички активни</a>
+  <a data-tab="changed">Промени</a>
+  <a data-tab="sold">Продадени</a>
 </nav>
 
 <main>
 
-  <section id="all">
+  <section id="all" class="active-section">
     <h2>Всички активни обяви <span class="badge">{n_total}</span></h2>
     <p class="section-desc">Пълен списък на текущо активните обяви.</p>
     <div class="search-wrap">
@@ -1108,19 +1120,30 @@ document.querySelectorAll('table.data-table th').forEach((th, colIdx) => {{
   }});
 }});
 
-// ── Nav highlight on scroll ──────────────────────────────────────────────────
-const sections = document.querySelectorAll('main section[id]');
-const navLinks = document.querySelectorAll('nav a');
-const observer = new IntersectionObserver(entries => {{
-  entries.forEach(e => {{
-    if (e.isIntersecting) {{
-      navLinks.forEach(a => a.classList.remove('active'));
-      const link = document.querySelector('nav a[href="#' + e.target.id + '"]');
-      if (link) link.classList.add('active');
-    }}
+// ── Tab navigation ───────────────────────────────────────────────────────────
+(function () {{
+  const navLinks = document.querySelectorAll('nav a[data-tab]');
+  const sections = document.querySelectorAll('main section[id]');
+
+  function activateTab(targetId) {{
+    sections.forEach(s => s.classList.toggle('active-section', s.id === targetId));
+    navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === targetId));
+    // push hash without triggering scroll
+    history.replaceState(null, '', '#' + targetId);
+  }}
+
+  navLinks.forEach(a => {{
+    a.addEventListener('click', e => {{
+      e.preventDefault();
+      activateTab(a.dataset.tab);
+    }});
   }});
-}}, {{ threshold: 0.25 }});
-sections.forEach(s => observer.observe(s));
+
+  // On load: honour the URL hash if valid, otherwise default to "all"
+  const hash = location.hash.replace('#', '');
+  const validIds = Array.from(sections).map(s => s.id);
+  activateTab(validIds.includes(hash) ? hash : 'all');
+}})();
 </script>
 
 </body>
