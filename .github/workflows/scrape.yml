@@ -78,13 +78,8 @@ jobs:
 
       # === Install Chromium only if missing ===
       - name: Install Playwright Browsers
-        run: |
-          if [ ! -d "$PLAYWRIGHT_BROWSERS_PATH" ] || [ -z "$(ls -A $PLAYWRIGHT_BROWSERS_PATH)" ]; then
-            echo "Installing Playwright Chromium..."
-            python -m playwright install chromium --with-deps
-          else
-            echo "Playwright browser cache found"
-          fi
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: python -m playwright install chromium --with-deps
 
       # === Run Scraper ===
       - name: Run scraper
