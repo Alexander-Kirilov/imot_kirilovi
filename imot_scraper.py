@@ -692,12 +692,30 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
     df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
 
-    n_total = len(df_active)
+    # ── Нови — добавени през последните 3 дни ───────────────────────────────
+    from datetime import timedelta
+    cutoff_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    if not df_active.empty and COL_FIRST_SEEN in df_active.columns:
+        df_recent = df_active[df_active[COL_FIRST_SEEN].fillna("") >= cutoff_date].copy()
+        df_recent = df_recent.sort_values(COL_FIRST_SEEN, ascending=False)
+    else:
+        df_recent = pd.DataFrame()
+
+    n_total   = len(df_active)
+    n_recent  = len(df_recent)
     n_changed = len(df_changed_all)
-    n_sold = len(df_sold)
+    n_sold    = len(df_sold)
 
     if not df_active.empty:
-        df_active = df_active.sort_values(COL_SCRAPED_DATE, ascending=False)
+        def _hist_depth(h):
+            if not isinstance(h, str) or not h.strip():
+                return 0
+            return h.count(" → ") + 1
+        df_active["_hist_depth"] = df_active[COL_PRICE_HISTORY].apply(_hist_depth)
+        is_m2 = df_active[COL_LOCATION].fillna("").str.contains(r"Младост\s*2\b", case=False, regex=True)
+        df_m2   = df_active[is_m2].sort_values("_hist_depth", ascending=False)
+        df_rest = df_active[~is_m2].sort_values(COL_SCRAPED_DATE, ascending=False)
+        df_active = pd.concat([df_m2, df_rest], ignore_index=True).drop(columns=["_hist_depth"])
     if not df_new_all.empty:
         df_new_all = df_new_all.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
                                         ascending=False)
@@ -705,6 +723,16 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         df_changed_all = df_changed_all.sort_values(COL_SCRAPED_DATE, ascending=False)
 
     # ── Build tables ─────────────────────────────────────────────────────
+    recent_table = _table(
+        df_recent,
+        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN,
+         COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
+         "Добавена", "Свалена ценова история", ""],
+        css_id="recent-table",
+    )
+
     new_table = _table(
         df_new_all,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
@@ -856,7 +884,8 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   /* ── Sections ── */
   main {{ padding: 0 32px 48px; }}
-  section {{ padding-top: 36px; }}
+  section {{ padding-top: 36px; display: none; }}
+  section.active-section {{ display: block; }}
   section h2 {{
     font-size: 15px;
     font-weight: 600;
@@ -1021,6 +1050,10 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     <div class="stat-label">Активни обяви</div>
   </div>
   <div class="stat">
+    <div class="stat-num green">{n_recent}</div>
+    <div class="stat-label">Нови (3 дни)</div>
+  </div>
+  <div class="stat">
     <div class="stat-num orange">{n_changed}</div>
     <div class="stat-label">Промени в цена</div>
   </div>
@@ -1031,16 +1064,17 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 </div>
 
 <nav>
-  <a href="#all"     class="active">Всички активни</a>
-  <a href="#changed">Промени</a>
-  <a href="#sold">Продадени</a>
+  <a data-tab="all"     class="active">Всички активни</a>
+  <a data-tab="recent">Нови <span class="badge" style="font-size:11px;padding:1px 7px">{n_recent}</span></a>
+  <a data-tab="changed">Промени</a>
+  <a data-tab="sold">Продадени</a>
 </nav>
 
 <main>
 
-  <section id="all">
+  <section id="all" class="active-section">
     <h2>Всички активни обяви <span class="badge">{n_total}</span></h2>
-    <p class="section-desc">Пълен списък на текущо активните обяви.</p>
+    <p class="section-desc">Пълен списък на текущо активните обяви. Младост 2 е показана първа, сортирана по история на цената.</p>
     <div class="search-wrap">
       <input type="text" id="all-search" placeholder="Търси по локация, цена, площ…" oninput="filterTable('all-table', this.value)">
     </div>
@@ -1049,9 +1083,23 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     </div>
   </section>
 
+  <section id="recent">
+    <h2>Нови обяви <span class="badge">{n_recent}</span></h2>
+    <p class="section-desc">Обяви добавени за първи път през последните 3 дни.</p>
+    <div class="search-wrap">
+      <input type="text" id="recent-search" placeholder="Търси…" oninput="filterTable('recent-table', this.value)">
+    </div>
+    <div class="table-wrap">
+      {recent_table}
+    </div>
+  </section>
+
   <section id="changed">
     <h2>Промени в цената <span class="badge">{n_changed}</span></h2>
     <p class="section-desc">Обяви с регистрирана промяна в цената.</p>
+    <div class="search-wrap">
+      <input type="text" id="changed-search" placeholder="Търси…" oninput="filterTable('changed-table', this.value)">
+    </div>
     <div class="table-wrap">
       {changed_table}
     </div>
@@ -1060,6 +1108,9 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   <section id="sold">
     <h2>Продадени / свалени <span class="badge">{n_sold}</span></h2>
     <p class="section-desc">Обяви, изчезнали от сайта (вероятно продадени или свалени).</p>
+    <div class="search-wrap">
+      <input type="text" id="sold-search" placeholder="Търси…" oninput="filterTable('sold-table', this.value)">
+    </div>
     <div class="table-wrap">
       {sold_table}
     </div>
@@ -1110,19 +1161,28 @@ document.querySelectorAll('table.data-table th').forEach(th => {{
   }});
 }});
 
-// ── Nav highlight on scroll ──────────────────────────────────────────────────
-const sections = document.querySelectorAll('main section[id]');
-const navLinks = document.querySelectorAll('nav a');
-const observer = new IntersectionObserver(entries => {{
-  entries.forEach(e => {{
-    if (e.isIntersecting) {{
-      navLinks.forEach(a => a.classList.remove('active'));
-      const link = document.querySelector('nav a[href="#' + e.target.id + '"]');
-      if (link) link.classList.add('active');
-    }}
+// ── Tab navigation ───────────────────────────────────────────────────────────
+(function () {{
+  const navLinks = document.querySelectorAll('nav a[data-tab]');
+  const sections = document.querySelectorAll('main section[id]');
+
+  function activateTab(targetId) {{
+    sections.forEach(s => s.classList.toggle('active-section', s.id === targetId));
+    navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === targetId));
+    history.replaceState(null, '', '#' + targetId);
+  }}
+
+  navLinks.forEach(a => {{
+    a.addEventListener('click', e => {{
+      e.preventDefault();
+      activateTab(a.dataset.tab);
+    }});
   }});
-}}, {{ threshold: 0.25 }});
-sections.forEach(s => observer.observe(s));
+
+  const hash = location.hash.replace('#', '');
+  const validIds = Array.from(sections).map(s => s.id);
+  activateTab(validIds.includes(hash) ? hash : 'all');
+}})();
 </script>
 
 </body>
