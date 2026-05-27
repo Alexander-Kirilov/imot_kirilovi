@@ -57,7 +57,6 @@ RECEIVERS_RAW = os.environ.get("RECEIVERS")
 RECEIVERS = [r.strip() for r in RECEIVERS_RAW.split(",") if r.strip()]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
-# Линкът за търсене вече се взима от променлива на средата
 base_url = os.environ.get(
     "BASE_URL",
 )
@@ -86,9 +85,11 @@ COL_IMAGES = 'Image_Paths'  # comma-separated relative paths
 # ================= HELPERS =================
 
 def clean_price(raw):
-    if not raw: return None
+    if not raw:
+        return None
     m = re.search(r'([\d\s.,]+)\s*€', raw)
-    if not m: return None
+    if not m:
+        return None
     cleaned = m.group(1).replace(' ', '').replace(',', '.')
     try:
         return float(cleaned)
@@ -98,7 +99,8 @@ def clean_price(raw):
 
 
 def normalize_location(loc):
-    if not loc: return loc
+    if not loc:
+        return loc
     rules = {
         r'Младост\s*IV-ти': 'Младост 4',
         r'Младост\s*IV': 'Младост 4',
@@ -119,9 +121,11 @@ def parse_total_ads(page_content):
     soup = BeautifulSoup(page_content, 'html.parser')
     text = soup.get_text(separator=' ', strip=True)
     m = re.search(r'(?:от\s*общо\s*|от\s*)(\d+)\s*обяв[иа]', text, re.IGNORECASE)
-    if m: return int(m.group(1))
+    if m:
+        return int(m.group(1))
     m2 = re.search(r'(\d+)\s*[-–]\s*\d+\s*от\s*общо\s*(\d+)', text)
-    if m2: return int(m2.group(2))
+    if m2:
+        return int(m2.group(2))
     return None
 
 
@@ -136,7 +140,8 @@ def parse_page(page_content, pg_num=None):
     for item in items:
         try:
             title_a = item.find('a', class_='title')
-            if not title_a: continue
+            if not title_a:
+                continue
 
             title = title_a.get_text(separator=' ', strip=True)
             href = title_a['href'].strip()
@@ -158,17 +163,21 @@ def parse_page(page_content, pg_num=None):
 
             size = None
             m = re.search(r'(\d{2,3})\s*кв\.?\s*м', info_text)
-            if m: size = int(m.group(1))
+            if m:
+                size = int(m.group(1))
 
             floor = total_floors = None
             m_floor = re.search(r'(\d+)\s*[-–]\s*(?:ти|ри)?', info_text)
-            if m_floor: floor = int(m_floor.group(1))
+            if m_floor:
+                floor = int(m_floor.group(1))
             m_total = re.search(r'(?:от\s*|/\s*)(\d+)', info_text)
-            if m_total: total_floors = int(m_total.group(1))
+            if m_total:
+                total_floors = int(m_total.group(1))
 
             year = None
             m_year = re.search(r'(19\d{2}|20\d{2})(?:\s*[-–]\s*(19\d{2}|20\d{2}))?', info_text)
-            if m_year: year = m_year.group(0).strip()
+            if m_year:
+                year = m_year.group(0).strip()
 
             location = None
             if 'град София,' in title:
@@ -291,7 +300,8 @@ def parse_site_price_history_html(raw_html):
             elif "+" in change_txt:
                 span_class = ' class="price-up"'
 
-            change_part = f' <span{span_class}>{change_txt}</span>' if change_txt and change_txt not in ["", "—"] else ""
+            change_part = f' <span{span_class}>{change_txt}</span>' if change_txt and change_txt not in ["",
+                                                                                                         "—"] else ""
             parts.append(f"{date_txt}{change_part} → {price_txt}")
 
     result = " | ".join(parts)
@@ -311,7 +321,7 @@ def get_listing_id_from_url(url):
     return match.group(1) if match else None
 
 
-def extract_images_improved(page, listing_url, max_images=2):
+def extract_images(page, listing_url, max_images=2):
     urls = []
     listing_id = get_listing_id_from_url(listing_url)
 
@@ -326,10 +336,8 @@ def extract_images_improved(page, listing_url, max_images=2):
             page.mouse.wheel(0, 1000)
             page.wait_for_timeout(500)
 
-        # Взимаме всички carousel изображения
         images = page.query_selector_all("img.carouselimg")
 
-        # Събираме кандидатите с техния номер от alt="... изображение N"
         candidates_with_id = []
         candidates_fallback = []
         for img in images:
@@ -370,8 +378,8 @@ def extract_images_improved(page, listing_url, max_images=2):
 
         return unique_urls[:max_images]
 
-    except Exception as e:
-        logger.warning(f"extract_images_improved error: {e}")
+    except Exception as extract_img_error:
+        logger.warning(f"extract_images error: {extract_img_error}")
         return urls
 
 
@@ -384,7 +392,6 @@ def download_images_from_urls(listing_url, image_urls, max_images=2):
     img_dir = IMAGES_DIR / lid
     img_dir.mkdir(parents=True, exist_ok=True)
 
-    # Хешове на вече свалените снимки за тази обява
     existing_hashes = set()
     for existing in img_dir.glob("*.jpg"):
         try:
@@ -474,12 +481,10 @@ def scrape_site_price_histories_selenium(links):
             try:
                 driver.get(url)
 
-                # Изчакваме контейнера
                 price_history_elem = wait.until(
                     EC.presence_of_element_located((By.ID, "priceHistory2"))
                 )
 
-                # зарежда history-то чрез JS
                 try:
                     title_span = price_history_elem.find_element(
                         By.CSS_SELECTOR,
@@ -524,9 +529,7 @@ def scrape_site_price_histories_selenium(links):
                     result[url]["price_history"] = price_hist
                 else:
                     logger.warning(f"  ⚠ Няма извлечена история за {url}")
-                    # Запази поне празен string
                     result[url]["price_history"] = ""
-
 
             except Exception as hist_err:
                 first_line = str(hist_err).splitlines()[0].strip() or "Chrome crash (empty message)"
@@ -555,7 +558,7 @@ def scrape_site_price_histories_selenium(links):
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 })
                 p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                image_urls = extract_images_improved(p_page, url, max_images=2)
+                image_urls = extract_images(p_page, url, max_images=2)
                 if image_urls:
                     img_paths, new_count = download_images_from_urls(url, image_urls, max_images=2)
                     if img_paths:
@@ -603,7 +606,8 @@ def _fmt_pm2(x):
 
 
 def _link_cell(href):
-    if not href or pd.isna(href): return "—"
+    if not href or pd.isna(href):
+        return "—"
     return f'<a href="{href}" target="_blank" rel="noopener">🔗 Виж</a>'
 
 
@@ -628,14 +632,17 @@ def _img_cell(paths_str):
 def _build_rows(df, cols):
     rows_html = []
     for _, row in df.iterrows():
-        # Data attrs за JS филтриране (независими от позицията на колоната)
-        loc_val   = str(row.get(COL_LOCATION, "") or "").strip()
+        loc_val = str(row.get(COL_LOCATION, "") or "").strip()
         price_val = row.get(COL_PRICE, "")
         floor_val = row.get(COL_FLOOR, "")
-        try:    price_num = int(round(float(price_val))) if pd.notna(price_val) and price_val != "" else ""
-        except: price_num = ""
-        try:    floor_num = int(float(floor_val)) if pd.notna(floor_val) and floor_val != "" else ""
-        except: floor_num = ""
+        try:
+            price_num = int(round(float(price_val))) if pd.notna(price_val) and price_val != "" else ""
+        except:
+            price_num = ""
+        try:
+            floor_num = int(float(floor_val)) if pd.notna(floor_val) and floor_val != "" else ""
+        except:
+            floor_num = ""
         tr_attrs = f'data-loc="{loc_val}" data-price="{price_num}" data-floor="{floor_num}"'
 
         cells = []
@@ -689,7 +696,6 @@ def _table(df, cols, headers, css_id="", extra_class=""):
 
 
 def generate_html(df_input: pd.DataFrame, now_str: str):
-
     # ── Derive sections ───────────────────────────────────────────────────────
     df_active = df_input[~df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
     df_new_all = df_active.copy()
@@ -711,10 +717,10 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     else:
         df_recent = pd.DataFrame()
 
-    n_total   = len(df_active)
-    n_recent  = len(df_recent)
+    n_total = len(df_active)
+    n_recent = len(df_recent)
     n_changed = len(df_changed_all)
-    n_sold    = len(df_sold)
+    n_sold = len(df_sold)
 
     # ── Сортиране: Младост 2 първо по дълбочина на ценова история ────────────
     if not df_active.empty:
@@ -722,14 +728,16 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
             if not isinstance(h, str) or not h.strip():
                 return 0
             return h.count(" → ") + 1
+
         df_active["_hist_depth"] = df_active[COL_PRICE_HISTORY].apply(_hist_depth)
         is_m2 = df_active[COL_LOCATION].fillna("").str.contains(r"Младост\s*2\b", case=False, regex=True)
-        df_m2   = df_active[is_m2].sort_values("_hist_depth", ascending=False)
+        df_m2 = df_active[is_m2].sort_values("_hist_depth", ascending=False)
         df_rest = df_active[~is_m2].sort_values(COL_SCRAPED_DATE, ascending=False)
         df_active = pd.concat([df_m2, df_rest], ignore_index=True).drop(columns=["_hist_depth"])
     if not df_new_all.empty:
-        df_new_all = df_new_all.sort_values(COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
-                                        ascending=False)
+        df_new_all = df_new_all.sort_values(
+            COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
+            ascending=False)
     if not df_changed_all.empty:
         df_changed_all = df_changed_all.sort_values(COL_SCRAPED_DATE, ascending=False)
 
@@ -790,7 +798,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Имоти сем. Кирилови</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
 <style>
   :root {{
     --bg:        #0f1117;
@@ -1216,7 +1224,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 </main>
 
 <footer>
-  Данни от imot.bg · Обновява се автоматично в 07:00 и 13:00 ч. · {now_str}
+  Последно обновен: {now_str}
 </footer>
 
 <script>
@@ -1452,7 +1460,6 @@ if not listings:
 df_new = pd.DataFrame(listings)
 df_sold_now = pd.DataFrame()
 
-# Selenium: price history + images
 selenium_results = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist())
 df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("price_history", "")
@@ -1465,7 +1472,6 @@ df_new[COL_IMAGES] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("images", "")
 )
 
-# Load history
 df_history = pd.DataFrame()
 if os.path.exists(HISTORY_FILE):
     try:
@@ -1474,7 +1480,6 @@ if os.path.exists(HISTORY_FILE):
     except Exception as e:
         logger.error(f"Error reading parquet: {e}")
 
-# Ensure all columns exist in history
 if not df_history.empty:
     df_history = deduplicate_history(df_history, COL_LINK, COL_PRICE_HISTORY)
     df_history[COL_PRICE_HISTORY] = df_history[COL_PRICE_HISTORY].fillna("")
@@ -1548,7 +1553,6 @@ if not df_history.empty:
         })
         logger.info(f"Found {len(df_changed)} price changes")
 
-# Update df_all
 for _, row in df_new.iterrows():
     link = row[COL_LINK]
     row_dict = row.to_dict()
@@ -1558,12 +1562,9 @@ for _, row in df_new.iterrows():
         old_scraped_date = df_all.at[link, COL_SCRAPED_DATE]
         new_price = row_dict.get(COL_PRICE)
         new_scraped_date = TODAY
-
-        # Preserve first_seen date
         row_dict[COL_FIRST_SEEN] = df_all.at[link, COL_FIRST_SEEN] or old_scraped_date
-
-        # Preserve images if already downloaded
         existing_images = df_all.at[link, COL_IMAGES] if COL_IMAGES in df_all.columns else ""
+
         if existing_images and not row_dict.get(COL_IMAGES):
             row_dict[COL_IMAGES] = existing_images
 
@@ -1583,14 +1584,12 @@ for _, row in df_new.iterrows():
                 current_hist = f"{current_hist} → {new_entry}" if current_hist.strip() else new_entry
             df_all.at[link, COL_PRICE_HISTORY] = current_hist
     else:
-        # new listing
         if pd.notna(row_dict.get(COL_PRICE)):
             row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
         row_dict[COL_SOLD] = False
         row_dict[COL_FIRST_SEEN] = TODAY
         df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
 
-# Detect sold
 if not df_history.empty:
     base_unsold = df_history[~df_history[COL_SOLD].fillna(False)]
     if not base_unsold.empty:
@@ -1601,7 +1600,6 @@ if not df_history.empty:
                 df_all[COL_SOLD] = False
             df_all.loc[df_all[COL_LINK].isin(sold_links), COL_SOLD] = True
 
-# Final cleanup
 df_all = df_all.drop_duplicates(subset=[COL_LINK], keep='last').reset_index(drop=True)
 
 logger.info(
@@ -1609,7 +1607,6 @@ logger.info(
     f"Sold: {len(df_sold_now)}  |  Total unique: {len(df_all)}"
 )
 
-# Save data
 df_all.to_parquet(HISTORY_FILE, index=False)
 df_all.to_csv("all_listings_history.csv", index=False, encoding='utf-8-sig')
 
@@ -1671,19 +1668,18 @@ if len(df_new_only) > 0 or len(df_changed) > 0 or len(df_sold_now) > 0:
         except (ValueError, TypeError):
             return str(x) if x else "—"
 
-
     def fmt_s(x):
         try:
             return f"{int(float(x))} m²" if pd.notna(x) and x != "" else "—"
         except (ValueError, TypeError):
             return str(x) if x else "—"
 
-
     def fmt_m(x):
         try:
             return f"{int(round(float(x)))} €/m²" if pd.notna(x) and x != "" else "—"
         except (ValueError, TypeError):
             return str(x) if x else "—"
+
 
     CSS = """<style>
 body{font-family:Arial,sans-serif;line-height:1.6;color:#333;background:#f9f9f9}
@@ -1747,7 +1743,8 @@ a{color:#4f9cf9;text-decoration:none}
         if COL_PRICE in df_ch.columns and COL_SIZE in df_ch.columns and COL_PRICE_PER_SQM not in df_ch.columns:
             df_ch[COL_PRICE_PER_SQM] = (df_ch[COL_PRICE] / df_ch[COL_SIZE]).round(2)
         tbl = to_html_table(df_ch,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY,
+                             COL_SITE_PRICE_HISTORY, COL_LINK],
                             ["Локация", "Нова цена", "Площ", "€/m²", "История на цената", "История (сайт)", ""])
         changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
@@ -1759,9 +1756,12 @@ a{color:#4f9cf9;text-decoration:none}
         sold_section = f"""<h3><span class="pill sld">ПРОДАДЕНИ</span> &nbsp;{len(df_sold_now)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     subject_parts = []
-    if not df_new_only.empty:   subject_parts.append(f"{len(df_new_only)} НОВИ")
-    if not df_changed.empty:    subject_parts.append(f"{len(df_changed)} ПРОМЯНА")
-    if not df_sold_now.empty:   subject_parts.append(f"{len(df_sold_now)} ПРОДАДЕНИ")
+    if not df_new_only.empty:
+        subject_parts.append(f"{len(df_new_only)} НОВИ")
+    if not df_changed.empty:
+        subject_parts.append(f"{len(df_changed)} ПРОМЯНА")
+    if not df_sold_now.empty:
+        subject_parts.append(f"{len(df_sold_now)} ПРОДАДЕНИ")
     subject = f"Имоти – {' · '.join(subject_parts)} – {TODAY}"
 
     email_html = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
