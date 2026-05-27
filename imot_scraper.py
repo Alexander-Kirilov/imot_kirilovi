@@ -628,6 +628,16 @@ def _img_cell(paths_str):
 def _build_rows(df, cols):
     rows_html = []
     for _, row in df.iterrows():
+        # Data attrs за JS филтриране (независими от позицията на колоната)
+        loc_val   = str(row.get(COL_LOCATION, "") or "").strip()
+        price_val = row.get(COL_PRICE, "")
+        floor_val = row.get(COL_FLOOR, "")
+        try:    price_num = int(round(float(price_val))) if pd.notna(price_val) and price_val != "" else ""
+        except: price_num = ""
+        try:    floor_num = int(float(floor_val)) if pd.notna(floor_val) and floor_val != "" else ""
+        except: floor_num = ""
+        tr_attrs = f'data-loc="{loc_val}" data-price="{price_num}" data-floor="{floor_num}"'
+
         cells = []
         for col_key in cols:
             val = row.get(col_key, "")
@@ -664,7 +674,7 @@ def _build_rows(df, cols):
             else:
                 cells.append(f"<td>{val if pd.notna(val) and val != '' else '—'}</td>")
 
-        rows_html.append("<tr>" + "".join(cells) + "</tr>")
+        rows_html.append(f"<tr {tr_attrs}>" + "".join(cells) + "</tr>")
     return "\n".join(rows_html)
 
 
@@ -706,6 +716,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     n_changed = len(df_changed_all)
     n_sold    = len(df_sold)
 
+    # ── Сортиране: Младост 2 първо по дълбочина на ценова история ────────────
     if not df_active.empty:
         def _hist_depth(h):
             if not isinstance(h, str) or not h.strip():
@@ -731,15 +742,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
          "Добавена", "Свалена ценова история", ""],
         css_id="recent-table",
-    )
-
-    new_table = _table(
-        df_new_all,
-        [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Година",
-         "Свалена ценова история", ""],
-        css_id="new-table",
     )
 
     changed_table = _table(
@@ -771,6 +773,14 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         css_id="sold-table",
         extra_class="sold-table",
     )
+
+    # ── Уникални локации за dropdown ─────────────────────────────────────────
+    import json as _json
+    all_locs = sorted(
+        {str(v).strip() for v in df_input[COL_LOCATION].dropna() if str(v).strip()},
+        key=lambda x: x.lower()
+    )
+    locations_json = _json.dumps(all_locs, ensure_ascii=False)
 
     # ── Full HTML ─────────────────────────────────────────────────────────────
     dashboard_html = f"""<!DOCTYPE html>
@@ -881,6 +891,78 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   }}
   nav a:hover  {{ color: var(--text); border-color: var(--border); }}
   nav a.active {{ color: var(--accent); border-color: var(--accent); }}
+
+  /* ── Filter bar ── */
+  .filter-bar {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }}
+  .filter-group {{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }}
+  .filter-label {{
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    white-space: nowrap;
+  }}
+  .filter-bar select,
+  .filter-bar input[type=number] {{
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }}
+  .filter-bar select {{ min-width: 160px; max-width: 220px; cursor: pointer; }}
+  .filter-bar input[type=number] {{ width: 88px; -moz-appearance: textfield; }}
+  .filter-bar input[type=number]::-webkit-outer-spin-button,
+  .filter-bar input[type=number]::-webkit-inner-spin-button {{ -webkit-appearance: none; }}
+  .filter-bar select:focus,
+  .filter-bar input:focus {{ border-color: var(--accent); }}
+  .filter-sep {{ color: var(--border); font-size: 16px; }}
+  .filter-reset {{
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-left: auto;
+  }}
+  .filter-reset:hover {{ border-color: var(--red); color: var(--red); }}
+  .filter-active-count {{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    white-space: nowrap;
+    display: none;
+  }}
+  .filter-active-count.visible {{ display: inline; }}
+
+  @media (max-width: 640px) {{
+    .filter-bar {{ padding: 12px 16px; }}
+    .filter-bar select {{ min-width: 120px; }}
+    .filter-bar input[type=number] {{ width: 70px; }}
+    .filter-reset {{ margin-left: 0; }}
+  }}
 
   /* ── Sections ── */
   main {{ padding: 0 32px 48px; }}
@@ -1070,50 +1152,65 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   <a data-tab="sold">Продадени</a>
 </nav>
 
+<div class="filter-bar">
+  <div class="filter-group">
+    <span class="filter-label">Район</span>
+    <select id="f-loc">
+      <option value="">Всички</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Цена</span>
+    <input type="number" id="f-price-min" placeholder="от €" min="0" step="1000">
+    <span class="filter-sep">–</span>
+    <input type="number" id="f-price-max" placeholder="до €" min="0" step="1000">
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Етаж</span>
+    <input type="number" id="f-floor-min" placeholder="от" min="0" step="1">
+    <span class="filter-sep">–</span>
+    <input type="number" id="f-floor-max" placeholder="до" min="0" step="1">
+  </div>
+  <span class="filter-active-count" id="f-count"></span>
+  <button class="filter-reset" id="f-reset">✕ Изчисти</button>
+</div>
+
 <main>
 
   <section id="all" class="active-section">
     <h2>Всички активни обяви <span class="badge">{n_total}</span></h2>
     <p class="section-desc">Пълен списък на текущо активните обяви. Младост 2 е показана първа, сортирана по история на цената.</p>
     <div class="search-wrap">
-      <input type="text" id="all-search" placeholder="Търси по локация, цена, площ…" oninput="filterTable('all-table', this.value)">
+      <input type="text" id="all-search" placeholder="Търси по локация, цена, площ…" oninput="applyFilters()">
     </div>
-    <div class="table-wrap">
-      {all_table}
-    </div>
+    <div class="table-wrap">{all_table}</div>
   </section>
 
   <section id="recent">
     <h2>Нови обяви <span class="badge">{n_recent}</span></h2>
     <p class="section-desc">Обяви добавени за първи път през последните 3 дни.</p>
     <div class="search-wrap">
-      <input type="text" id="recent-search" placeholder="Търси…" oninput="filterTable('recent-table', this.value)">
+      <input type="text" id="recent-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
-    <div class="table-wrap">
-      {recent_table}
-    </div>
+    <div class="table-wrap">{recent_table}</div>
   </section>
 
   <section id="changed">
     <h2>Промени в цената <span class="badge">{n_changed}</span></h2>
     <p class="section-desc">Обяви с регистрирана промяна в цената.</p>
     <div class="search-wrap">
-      <input type="text" id="changed-search" placeholder="Търси…" oninput="filterTable('changed-table', this.value)">
+      <input type="text" id="changed-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
-    <div class="table-wrap">
-      {changed_table}
-    </div>
+    <div class="table-wrap">{changed_table}</div>
   </section>
 
   <section id="sold">
     <h2>Продадени / свалени <span class="badge">{n_sold}</span></h2>
     <p class="section-desc">Обяви, изчезнали от сайта (вероятно продадени или свалени).</p>
     <div class="search-wrap">
-      <input type="text" id="sold-search" placeholder="Търси…" oninput="filterTable('sold-table', this.value)">
+      <input type="text" id="sold-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
-    <div class="table-wrap">
-      {sold_table}
-    </div>
+    <div class="table-wrap">{sold_table}</div>
   </section>
 
 </main>
@@ -1123,25 +1220,139 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 </footer>
 
 <script>
-// ── Simple table search ──────────────────────────────────────────────────────
-function filterTable(tableId, query) {{
-  const tbl  = document.getElementById(tableId);
-  if (!tbl) return;
-  const rows = tbl.querySelectorAll('tbody tr');
-  const q    = query.trim().toLowerCase();
-  rows.forEach(r => {{
-    r.style.display = q === '' || r.textContent.toLowerCase().includes(q) ? '' : 'none';
+// ── Location data (injected from Python) ─────────────────────────────────────
+const ALL_LOCATIONS = {locations_json};
+
+// ── Populate district dropdown ────────────────────────────────────────────────
+(function () {{
+  const sel = document.getElementById('f-loc');
+  ALL_LOCATIONS.forEach(loc => {{
+    const opt = document.createElement('option');
+    opt.value = loc;
+    opt.textContent = loc;
+    sel.appendChild(opt);
   }});
+}})();
+
+// ── Tab navigation ────────────────────────────────────────────────────────────
+const TAB_SEARCH = {{
+  'all':     'all-search',
+  'recent':  'recent-search',
+  'changed': 'changed-search',
+  'sold':    'sold-search',
+}};
+const TAB_TABLE = {{
+  'all':     'all-table',
+  'recent':  'recent-table',
+  'changed': 'changed-table',
+  'sold':    'sold-table',
+}};
+
+let activeTab = 'all';
+
+(function () {{
+  const navLinks = document.querySelectorAll('nav a[data-tab]');
+  const sections = document.querySelectorAll('main section[id]');
+
+  function activateTab(targetId) {{
+    activeTab = targetId;
+    sections.forEach(s => s.classList.toggle('active-section', s.id === targetId));
+    navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === targetId));
+    history.replaceState(null, '', '#' + targetId);
+    applyFilters();
+  }}
+
+  navLinks.forEach(a => {{
+    a.addEventListener('click', e => {{
+      e.preventDefault();
+      activateTab(a.dataset.tab);
+    }});
+  }});
+
+  const hash = location.hash.replace('#', '');
+  const validIds = Array.from(sections).map(s => s.id);
+  activateTab(validIds.includes(hash) ? hash : 'all');
+}})();
+
+// ── Unified filter + search ───────────────────────────────────────────────────
+function applyFilters() {{
+  const loc      = document.getElementById('f-loc').value.trim().toLowerCase();
+  const priceMin = parseFloat(document.getElementById('f-price-min').value) || null;
+  const priceMax = parseFloat(document.getElementById('f-price-max').value) || null;
+  const floorMin = parseFloat(document.getElementById('f-floor-min').value) || null;
+  const floorMax = parseFloat(document.getElementById('f-floor-max').value) || null;
+
+  // Текстово търсене само за активния таб
+  const searchInput = document.getElementById(TAB_SEARCH[activeTab]);
+  const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+  // Проверяваме дали има активен филтър
+  const hasFilter = loc || priceMin !== null || priceMax !== null ||
+                    floorMin !== null || floorMax !== null;
+
+  let totalVisible = 0;
+
+  // Прилагаме филтрите върху ВСИЧКИ таблици (за да са готови при превключване)
+  Object.entries(TAB_TABLE).forEach(([tabId, tableId]) => {{
+    const tbl = document.getElementById(tableId);
+    if (!tbl) return;
+    const isActive = tabId === activeTab;
+    let visibleInTab = 0;
+
+    tbl.querySelectorAll('tbody tr').forEach(row => {{
+      const rowLoc   = (row.dataset.loc   || '').toLowerCase();
+      const rowPrice = parseFloat(row.dataset.price) || null;
+      const rowFloor = parseFloat(row.dataset.floor) || null;
+
+      const locOk   = !loc      || rowLoc === loc;
+      const pMinOk  = priceMin === null || (rowPrice !== null && rowPrice >= priceMin);
+      const pMaxOk  = priceMax === null || (rowPrice !== null && rowPrice <= priceMax);
+      const fMinOk  = floorMin === null || (rowFloor !== null && rowFloor >= floorMin);
+      const fMaxOk  = floorMax === null || (rowFloor !== null && rowFloor <= floorMax);
+      // Текстово търсене само за активния таб
+      const textOk  = !isActive || !q || row.textContent.toLowerCase().includes(q);
+
+      const show = locOk && pMinOk && pMaxOk && fMinOk && fMaxOk && textOk;
+      row.style.display = show ? '' : 'none';
+      if (show && isActive) visibleInTab++;
+    }});
+
+    if (isActive) totalVisible = visibleInTab;
+  }});
+
+  // Брояч с видими резултати
+  const countEl = document.getElementById('f-count');
+  if (hasFilter || q) {{
+    countEl.textContent = `${{totalVisible}} резултата`;
+    countEl.classList.add('visible');
+  }} else {{
+    countEl.classList.remove('visible');
+  }}
 }}
 
-// ── Sortable columns ─────────────────────────────────────────────────────────
+// ── Filter inputs ─────────────────────────────────────────────────────────────
+['f-loc', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+  document.getElementById(id).addEventListener('input', applyFilters);
+}});
+
+document.getElementById('f-reset').addEventListener('click', () => {{
+  document.getElementById('f-loc').value = '';
+  ['f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+    document.getElementById(id).value = '';
+  }});
+  // Изчистваме и текстовото търсене на активния таб
+  const searchInput = document.getElementById(TAB_SEARCH[activeTab]);
+  if (searchInput) searchInput.value = '';
+  applyFilters();
+}});
+
+// ── Sortable columns ──────────────────────────────────────────────────────────
 document.querySelectorAll('table.data-table th').forEach(th => {{
   th.addEventListener('click', () => {{
     const table  = th.closest('table');
     const tbody  = table.querySelector('tbody');
     const rows   = Array.from(tbody.querySelectorAll('tr'));
     const asc    = th.classList.contains('sorted-asc');
-    // cellIndex = позицията в ТАЗИ таблица, не глобална
     const colIdx = th.cellIndex;
 
     table.querySelectorAll('th').forEach(t => t.classList.remove('sorted-asc','sorted-desc'));
@@ -1160,29 +1371,6 @@ document.querySelectorAll('table.data-table th').forEach(th => {{
     rows.forEach(r => tbody.appendChild(r));
   }});
 }});
-
-// ── Tab navigation ───────────────────────────────────────────────────────────
-(function () {{
-  const navLinks = document.querySelectorAll('nav a[data-tab]');
-  const sections = document.querySelectorAll('main section[id]');
-
-  function activateTab(targetId) {{
-    sections.forEach(s => s.classList.toggle('active-section', s.id === targetId));
-    navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === targetId));
-    history.replaceState(null, '', '#' + targetId);
-  }}
-
-  navLinks.forEach(a => {{
-    a.addEventListener('click', e => {{
-      e.preventDefault();
-      activateTab(a.dataset.tab);
-    }});
-  }});
-
-  const hash = location.hash.replace('#', '');
-  const validIds = Array.from(sections).map(s => s.id);
-  activateTab(validIds.includes(hash) ? hash : 'all');
-}})();
 </script>
 
 </body>
