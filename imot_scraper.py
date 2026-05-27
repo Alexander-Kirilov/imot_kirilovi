@@ -80,6 +80,7 @@ COL_PRICE_HISTORY = 'Price_History'
 COL_SOLD = 'Sold'
 COL_SITE_PRICE_HISTORY = 'Свалена_ценова_история'
 COL_IMAGES = 'Image_Paths'  # comma-separated relative paths
+COL_LAST_PRICE_CHANGE_DATE = 'Last_Price_Change_Date'
 
 
 # ================= HELPERS =================
@@ -248,6 +249,30 @@ def deduplicate_history(df, link_col, price_history_col):
     for col_key in df.columns:
         agg[col_key] = merge_history if col_key == price_history_col else 'last'
     return df.groupby(link_col, as_index=False).agg(agg)
+
+
+def extract_last_price_change_date(price_history: str, site_price_history: str) -> str:
+    """Връща най-скорошната дата от двата вида история, или '' ако няма."""
+    dates = []
+    for m in re.finditer(r'\((\d{4}-\d{2}-\d{2})\)', str(price_history or "")):
+        dates.append(m.group(1))
+    for m in re.finditer(r'(\d{2})\.(\d{2})\.(\d{4})', str(site_price_history or "")):
+        dates.append(f"{m.group(3)}-{m.group(2)}-{m.group(1)}")
+    for m in re.finditer(r'(\d{4}-\d{2}-\d{2})', str(site_price_history or "")):
+        dates.append(m.group(1))
+    return max(dates) if dates else ""
+
+
+def has_price_change_in_period(price_history: str, site_price_history: str, days: int = 30) -> bool:
+    """Вярно ако има промяна в някоя от двете истории И е в рамките на `days` дни."""
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    has_scraper_change = " → " in str(price_history or "")
+    has_site_change = " → " in str(site_price_history or "")
+    if not (has_scraper_change or has_site_change):
+        return False
+    last_date = extract_last_price_change_date(price_history, site_price_history)
+    return last_date >= cutoff if last_date else False
 
 
 def parse_site_price_history_html(raw_html):
@@ -601,6 +626,13 @@ def _fmt_size(x):
     return f"{int(x)} m²" if pd.notna(x) and x else "—"
 
 
+def _fmt_floor(x):
+    try:
+        return str(int(float(x))) if pd.notna(x) and x != "" else "—"
+    except (ValueError, TypeError):
+        return "—"
+
+
 def _fmt_pm2(x):
     return f"{int(round(x))} €/m²" if pd.notna(x) and x else "—"
 
@@ -661,6 +693,9 @@ def _build_rows(df, cols):
             elif col_key == COL_PRICE_PER_SQM:
                 cells.append(f"<td>{_fmt_pm2(val)}</td>")
 
+            elif col_key in (COL_FLOOR, COL_TOTAL_FLOORS):
+                cells.append(f"<td>{_fmt_floor(val)}</td>")
+
             elif col_key == COL_IMAGES:
                 cells.append(f"<td>{_img_cell(val)}</td>")
 
@@ -701,8 +736,33 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     df_new_all = df_active.copy()
 
     if not df_active.empty and COL_PRICE_HISTORY in df_active.columns:
-        mask_changed = df_active[COL_PRICE_HISTORY].fillna("").str.contains(" → ")
+        from datetime import timedelta
+        cutoff_30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+        def _in_last_30(row):
+            last_chg = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
+            if last_chg and last_chg >= cutoff_30:
+                return True
+            return has_price_change_in_period(
+                row.get(COL_PRICE_HISTORY, ""),
+                row.get(COL_SITE_PRICE_HISTORY, ""),
+                days=30,
+            )
+
+        mask_changed = df_active.apply(_in_last_30, axis=1)
         df_changed_all = df_active[mask_changed].copy()
+
+        def _last_chg_sort(row):
+            d = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
+            if d:
+                return d
+            return extract_last_price_change_date(
+                row.get(COL_PRICE_HISTORY, ""),
+                row.get(COL_SITE_PRICE_HISTORY, ""),
+            )
+        if not df_changed_all.empty:
+            df_changed_all["_sort_date"] = df_changed_all.apply(_last_chg_sort, axis=1)
+            df_changed_all = df_changed_all.sort_values("_sort_date", ascending=False).drop(columns=["_sort_date"])
     else:
         df_changed_all = pd.DataFrame()
 
@@ -1488,6 +1548,7 @@ if not df_history.empty:
         (COL_SOLD, False),
         (COL_FIRST_SEEN, ""),
         (COL_IMAGES, ""),
+        (COL_LAST_PRICE_CHANGE_DATE, ""),
     ]:
         if col not in df_history.columns:
             df_history[col] = default
@@ -1501,6 +1562,7 @@ if not df_all.empty:
         (COL_SITE_PRICE_HISTORY, ""),
         (COL_FIRST_SEEN, ""),
         (COL_IMAGES, ""),
+        (COL_LAST_PRICE_CHANGE_DATE, ""),
     ]:
         if col not in df_all.columns:
             df_all[col] = default
@@ -1572,7 +1634,15 @@ for _, row in df_new.iterrows():
             if col in row_dict and col != COL_PRICE_HISTORY and col != COL_FIRST_SEEN:
                 df_all.at[link, col] = row_dict[col]
         if COL_SITE_PRICE_HISTORY in row_dict:
-            df_all.at[link, COL_SITE_PRICE_HISTORY] = row_dict[COL_SITE_PRICE_HISTORY]
+            old_site_hist = df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else ""
+            new_site_hist = row_dict[COL_SITE_PRICE_HISTORY]
+            df_all.at[link, COL_SITE_PRICE_HISTORY] = new_site_hist
+            if new_site_hist and new_site_hist != old_site_hist:
+                site_last_date = extract_last_price_change_date("", new_site_hist)
+                if site_last_date:
+                    existing_chg = df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] if COL_LAST_PRICE_CHANGE_DATE in df_all.columns else ""
+                    if not existing_chg or site_last_date > str(existing_chg):
+                        df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] = site_last_date
 
         if pd.notna(new_price) and pd.notna(old_price) and old_price != new_price:
             current_hist = df_all.at[link, COL_PRICE_HISTORY] or ""
@@ -1583,6 +1653,7 @@ for _, row in df_new.iterrows():
             if new_entry and new_entry not in current_hist:
                 current_hist = f"{current_hist} → {new_entry}" if current_hist.strip() else new_entry
             df_all.at[link, COL_PRICE_HISTORY] = current_hist
+            df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] = TODAY
     else:
         if pd.notna(row_dict.get(COL_PRICE)):
             row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
