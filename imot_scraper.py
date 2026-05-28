@@ -741,13 +741,13 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
         def _in_last_30(row):
             last_chg = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
-            if last_chg and last_chg >= cutoff_30:
+            price_hist = str(row.get(COL_PRICE_HISTORY, "") or "")
+            site_hist = str(row.get(COL_SITE_PRICE_HISTORY, "") or "")
+            # Реална промяна = наличие на " → " в някоя от историите
+            has_actual_change = (" → " in price_hist) or (" → " in site_hist)
+            if last_chg and last_chg >= cutoff_30 and has_actual_change:
                 return True
-            return has_price_change_in_period(
-                row.get(COL_PRICE_HISTORY, ""),
-                row.get(COL_SITE_PRICE_HISTORY, ""),
-                days=30,
-            )
+            return has_price_change_in_period(price_hist, site_hist, days=30)
 
         mask_changed = df_active.apply(_in_last_30, axis=1)
         df_changed_all = df_active[mask_changed].copy()
@@ -1637,7 +1637,7 @@ for _, row in df_new.iterrows():
             old_site_hist = df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else ""
             new_site_hist = row_dict[COL_SITE_PRICE_HISTORY]
             df_all.at[link, COL_SITE_PRICE_HISTORY] = new_site_hist
-            if new_site_hist and new_site_hist != old_site_hist:
+            if new_site_hist and new_site_hist != old_site_hist and " → " in new_site_hist:
                 site_last_date = extract_last_price_change_date("", new_site_hist)
                 if site_last_date:
                     existing_chg = df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] if COL_LAST_PRICE_CHANGE_DATE in df_all.columns else ""
@@ -1761,7 +1761,8 @@ body{font-family:Arial,sans-serif;line-height:1.6;color:#333;background:#f9f9f9}
 .body{padding:24px 28px}
 h3{color:#444;font-size:14px;margin:24px 0 8px;border-bottom:2px solid #f0f0f0;padding-bottom:6px}
 .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
-.imot-table{border-collapse:collapse;min-width:600px;width:100%;font-size:13px;margin-bottom:8px}
+.scroll-hint{font-size:11px;color:#aaa;margin-bottom:4px;display:none}
+.imot-table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px}
 .imot-table th{background:#f5f5f5;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#666;padding:8px 12px;text-align:left;border-bottom:2px solid #e0e0e0;white-space:nowrap}
 .imot-table td{padding:9px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
 .imot-table tr:hover td{background:#fafafa}
@@ -1772,16 +1773,29 @@ a{color:#4f9cf9;text-decoration:none}
 .pill.sld{background:#fee2e2;color:#991b1b}
 .sold-table td{color:#999;text-decoration:line-through}
 .ftr{background:#f5f5f5;padding:12px 28px;font-size:12px;color:#999;text-align:center;border-radius:0 0 8px 8px}
+@media screen and (max-width:600px){
+  .body{padding:16px}
+  .scroll-hint{display:block}
+  .imot-table{font-size:12px}
+  .imot-table td,.imot-table th{padding:7px 8px}
+  .col-history{display:none}
+}
 </style>"""
 
 
     def to_html_table(df_in, cols, headers, extra_class=""):
-        tbl_head = "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
+        tbl_head = "<tr>" + "".join(
+            f"<th class='col-history'>{h}</th>" if h in ("История (сайт)", "История на цената")
+            else f"<th>{h}</th>"
+            for h in headers
+        ) + "</tr>"
         tbl_rows = []
         for _, email_row in df_in.iterrows():
             cells = []
-            for col_name in cols:
+            for col_name, h in zip(cols, headers):
                 v = email_row.get(col_name, "")
+                is_history = h in ("История (сайт)", "История на цената")
+                td_cls = " class='col-history'" if is_history else ""
                 if col_name == COL_LINK:
                     cells.append(f"<td><a href='{v}' target='_blank'>Виж →</a></td>")
                 elif col_name == COL_PRICE:
@@ -1793,10 +1807,11 @@ a{color:#4f9cf9;text-decoration:none}
                 elif col_name == 'Price_EUR_old':
                     cells.append(f"<td style='text-decoration:line-through;color:#999'>{fmt_p(v)}</td>")
                 else:
-                    cells.append(f"<td>{v if pd.notna(v) and v != '' else '—'}</td>")
+                    cells.append(f"<td{td_cls}>{v if pd.notna(v) and v != '' else '—'}</td>")
             tbl_rows.append("<tr>" + "".join(cells) + "</tr>")
         cls = f"imot-table {extra_class}".strip()
-        return f"<div class='tbl-scroll'><table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table></div>"
+        hint = "<div class='scroll-hint'>← плъзни за повече →</div>"
+        return f"{hint}<div class='tbl-scroll'><table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table></div>"
 
 
     new_section = changed_section = sold_section = ""
