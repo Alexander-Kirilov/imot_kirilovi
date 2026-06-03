@@ -81,6 +81,10 @@ COL_SOLD = 'Sold'
 COL_SITE_PRICE_HISTORY = 'Свалена_ценова_история'
 COL_IMAGES = 'Image_Paths'  # comma-separated relative paths
 COL_LAST_PRICE_CHANGE_DATE = 'Last_Price_Change_Date'
+COL_BULK_IMPORT = 'Bulk_Import'  # True ако имотът е добавен при bulk run (>5 нови наведнъж)
+
+# Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
+BULK_IMPORT_THRESHOLD = 5
 
 
 # ================= HELPERS =================
@@ -768,11 +772,18 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
     df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
 
-    # ── Нови — добавени през последните 3 дни ───────────────────────────────
+    # ── Нови — добавени за първи път през последните 20 дни, БЕЗ bulk import ──
     from datetime import timedelta
-    cutoff_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
     if not df_active.empty and COL_FIRST_SEEN in df_active.columns:
-        df_recent = df_active[df_active[COL_FIRST_SEEN].fillna("") >= cutoff_date].copy()
+        mask_recent = df_active[COL_FIRST_SEEN].fillna("") >= cutoff_date
+        # Изключваме имоти добавени при bulk run (скраперът ги е видял за пръв път
+        # в рун, където са добавени >5 наведнъж — т.е. не са реално нови обяви)
+        if COL_BULK_IMPORT in df_active.columns:
+            mask_not_bulk = ~df_active[COL_BULK_IMPORT].fillna(False).astype(bool)
+        else:
+            mask_not_bulk = pd.Series(True, index=df_active.index)
+        df_recent = df_active[mask_recent & mask_not_bulk].copy()
         df_recent = df_recent.sort_values(COL_FIRST_SEEN, ascending=False)
     else:
         df_recent = pd.DataFrame()
@@ -1201,7 +1212,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   </div>
   <div class="stat">
     <div class="stat-num green">{n_recent}</div>
-    <div class="stat-label">Нови (3 дни)</div>
+    <div class="stat-label">Нови (20 дни)</div>
   </div>
   <div class="stat">
     <div class="stat-num orange">{n_changed}</div>
@@ -1256,7 +1267,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   <section id="recent">
     <h2>Нови обяви <span class="badge">{n_recent}</span></h2>
-    <p class="section-desc">Обяви добавени за първи път през последните 3 дни.</p>
+    <p class="section-desc">Обяви добавени за първи път през последните 20 дни (без bulk import).</p>
     <div class="search-wrap">
       <input type="text" id="recent-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
@@ -1549,6 +1560,7 @@ if not df_history.empty:
         (COL_FIRST_SEEN, ""),
         (COL_IMAGES, ""),
         (COL_LAST_PRICE_CHANGE_DATE, ""),
+        (COL_BULK_IMPORT, False),
     ]:
         if col not in df_history.columns:
             df_history[col] = default
@@ -1563,6 +1575,7 @@ if not df_all.empty:
         (COL_FIRST_SEEN, ""),
         (COL_IMAGES, ""),
         (COL_LAST_PRICE_CHANGE_DATE, ""),
+        (COL_BULK_IMPORT, False),
     ]:
         if col not in df_all.columns:
             df_all[col] = default
@@ -1659,6 +1672,7 @@ for _, row in df_new.iterrows():
             row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
         row_dict[COL_SOLD] = False
         row_dict[COL_FIRST_SEEN] = TODAY
+        row_dict[COL_BULK_IMPORT] = len(df_new_only) > BULK_IMPORT_THRESHOLD
         df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
 
 if not df_history.empty:
