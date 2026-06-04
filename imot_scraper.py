@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from pathlib import Path
 
@@ -29,6 +29,37 @@ console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
+
+
+def cleanup_log(log_path: str, keep_days: int = 20) -> None:
+    """Трие редове от лог файла по-стари от `keep_days` дни."""
+    p = Path(log_path)
+    if not p.exists():
+        return
+    cutoff = (datetime.now() - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+    try:
+        lines = p.read_text(encoding='utf-8', errors='replace').splitlines(keepends=True)
+        kept = []
+        for line in lines:
+            # Форматът е "YYYY-MM-DD HH:MM:SS,mmm | ..." — ако редът започва с дата
+            m = re.match(r'(\d{4}-\d{2}-\d{2})', line)
+            if m:
+                if m.group(1) >= cutoff:
+                    kept.append(line)
+                # иначе → ред е по-стар, изхвърляме
+            else:
+                # ред без дата (continuation/traceback) → включваме само ако нещо вече е в kept
+                if kept:
+                    kept.append(line)
+        p.write_text("".join(kept), encoding='utf-8')
+        removed = len(lines) - len(kept)
+        if removed:
+            logger.info(f"Log cleanup: removed {removed} old lines (kept {keep_days} days)")
+    except Exception as _log_err:
+        logger.warning(f"Log cleanup failed: {_log_err}")
+
+
+cleanup_log('imot_scraper.log', keep_days=20)
 
 logger.info("=== Starting imot.bg scraper ===")
 
@@ -269,7 +300,7 @@ def extract_last_price_change_date(price_history: str, site_price_history: str) 
 
 def has_price_change_in_period(price_history: str, site_price_history: str, days: int = 30) -> bool:
     """Вярно ако има промяна в някоя от двете истории И е в рамките на `days` дни."""
-    from datetime import timedelta
+								  
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     has_scraper_change = " → " in str(price_history or "")
     has_site_change = " → " in str(site_price_history or "")
@@ -740,7 +771,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     df_new_all = df_active.copy()
 
     if not df_active.empty and COL_PRICE_HISTORY in df_active.columns:
-        from datetime import timedelta
+									  
         cutoff_30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
 
         def _in_last_30(row):
@@ -748,8 +779,11 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
             price_hist = str(row.get(COL_PRICE_HISTORY, "") or "")
             site_hist = str(row.get(COL_SITE_PRICE_HISTORY, "") or "")
             # Реална промяна = наличие на " → " в някоя от историите
+            # (имот с единична начална цена няма → и не трябва да е в Промени)
             has_actual_change = (" → " in price_hist) or (" → " in site_hist)
-            if last_chg and last_chg >= cutoff_30 and has_actual_change:
+            if not has_actual_change:
+                return False
+            if last_chg and last_chg >= cutoff_30:
                 return True
             return has_price_change_in_period(price_hist, site_hist, days=30)
 
@@ -772,9 +806,9 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
     df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
 
-    # ── Нови — добавени за първи път през последните 20 дни, БЕЗ bulk import ──
-    from datetime import timedelta
-    cutoff_date = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
+    # ── Нови — добавени за първи път през последните 5 дни, БЕЗ bulk import ──
+								  
+    cutoff_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
     if not df_active.empty and COL_FIRST_SEEN in df_active.columns:
         mask_recent = df_active[COL_FIRST_SEEN].fillna("") >= cutoff_date
         # Изключваме имоти добавени при bulk run (скраперът ги е видял за пръв път
@@ -809,8 +843,8 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         df_new_all = df_new_all.sort_values(
             COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
             ascending=False)
-    if not df_changed_all.empty:
-        df_changed_all = df_changed_all.sort_values(COL_SCRAPED_DATE, ascending=False)
+    # df_changed_all е вече сортиран по _sort_date по-горе — не презаписваме!
+																					  
 
     # ── Build tables ─────────────────────────────────────────────────────
     recent_table = _table(
@@ -1212,7 +1246,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   </div>
   <div class="stat">
     <div class="stat-num green">{n_recent}</div>
-    <div class="stat-label">Нови (20 дни)</div>
+    <div class="stat-label">Нови (5 дни)</div>
   </div>
   <div class="stat">
     <div class="stat-num orange">{n_changed}</div>
@@ -1267,7 +1301,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   <section id="recent">
     <h2>Нови обяви <span class="badge">{n_recent}</span></h2>
-    <p class="section-desc">Обяви добавени за първи път през последните 20 дни (без bulk import).</p>
+    <p class="section-desc">Обяви добавени за първи път през последните 5 дни (без bulk import).</p>
     <div class="search-wrap">
       <input type="text" id="recent-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
@@ -1276,7 +1310,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   <section id="changed">
     <h2>Промени в цената <span class="badge">{n_changed}</span></h2>
-    <p class="section-desc">Обяви с регистрирана промяна в цената.</p>
+    <p class="section-desc">Активни обяви с реална промяна в цената </p>
     <div class="search-wrap">
       <input type="text" id="changed-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
@@ -1647,9 +1681,14 @@ for _, row in df_new.iterrows():
             if col in row_dict and col != COL_PRICE_HISTORY and col != COL_FIRST_SEEN:
                 df_all.at[link, col] = row_dict[col]
         if COL_SITE_PRICE_HISTORY in row_dict:
-            old_site_hist = df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else ""
-            new_site_hist = row_dict[COL_SITE_PRICE_HISTORY]
-            df_all.at[link, COL_SITE_PRICE_HISTORY] = new_site_hist
+            old_site_hist = str(df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else "") or ""
+            new_site_hist = str(row_dict[COL_SITE_PRICE_HISTORY] or "").strip()
+            # Пазим старата история ако новата е празна или по-кратка (Selenium може да е пропуснал)
+            if new_site_hist and len(new_site_hist) >= len(old_site_hist):
+                df_all.at[link, COL_SITE_PRICE_HISTORY] = new_site_hist
+            else:
+                # Новата е празна/по-кратка → запазваме старата
+                new_site_hist = old_site_hist
             if new_site_hist and new_site_hist != old_site_hist and " → " in new_site_hist:
                 site_last_date = extract_last_price_change_date("", new_site_hist)
                 if site_last_date:
