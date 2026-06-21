@@ -80,7 +80,40 @@ jobs:
       - name: Install Playwright Browsers
         run: python -m playwright install chromium --with-deps
 
-      - name: Run bulk import patch (еднократно)
+ 
+      # === Run Scraper ===
+      - name: Run scraper
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          RECEIVERS: ${{ secrets.RECEIVERS }}
         run: |
-          python patch_bulk_import.py
-      
+          python imot_scraper.py
+
+      # === Debug ===
+      - name: Debug - check files
+        run: |
+          echo "=== Current directory ==="
+          ls -la
+
+          echo "=== docs folder ==="
+          ls -la docs/ || echo "ERROR: docs folder missing"
+
+          echo "=== git status ==="
+          git status
+
+      # === Commit & Push ===
+      - name: Commit & Push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add docs/index.html docs/images/ all_listings_history.parquet *.xlsx *.log 2>/dev/null || true
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Автоматично обновяване: $(date +'%d.%m.%Y %H:%M %Z')"
+            git push
+          fi
