@@ -55,7 +55,7 @@ print(f"Bulk_Import след:  {int(after_bulk)}")
 print(f"Променени редове:  {int(after_bulk - before_bulk)}")
 
 # ── Запис ─────────────────────────────────────────────────────────────────────
-df.to_parquet(HISTORY_FILE, index=False)
+df.to_parquet(HISTORY_FILE, index=False, compression='gzip')
 print(f"\n✓ Записано в {HISTORY_FILE}")
 
 # ── Проверка: таб Нови ─────────────────────────────────────────────────────────
