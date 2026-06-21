@@ -79,29 +79,32 @@ jobs:
       # === Install Chromium only if missing ===
       - name: Install Playwright Browsers
         run: python -m playwright install chromium --with-deps
-
- 
-      # === Run Scraper ===
-      - name: Run scraper
-        env:
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          BASE_URL: ${{ secrets.BASE_URL }}
-          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-          RECEIVERS: ${{ secrets.RECEIVERS }}
+      # === Run the patch -once ===
+      - name: Run bulk import patch (еднократно)
         run: |
-          python imot_scraper.py
+          python patch_bulk_import.py
+ 
+#      # === Run Scraper ===
+#      - name: Run scraper
+#        env:
+#          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+#          BASE_URL: ${{ secrets.BASE_URL }}
+#          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+#          RECEIVERS: ${{ secrets.RECEIVERS }}
+#        run: |
+#          python imot_scraper.py
 
       # === Debug ===
-      - name: Debug - check files
-        run: |
-          echo "=== Current directory ==="
-          ls -la
-
-          echo "=== docs folder ==="
-          ls -la docs/ || echo "ERROR: docs folder missing"
-
-          echo "=== git status ==="
-          git status
+#      - name: Debug - check files
+#        run: |
+#          echo "=== Current directory ==="
+#          ls -la
+#
+#          echo "=== docs folder ==="
+#          ls -la docs/ || echo "ERROR: docs folder missing"
+#
+#          echo "=== git status ==="
+#          git status
 
       # === Commit & Push ===
       - name: Commit & Push results
