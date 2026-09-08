@@ -10427,3 +10427,212 @@
 2026-09-08 13:25:32,315 | INFO    | Excel saved: imot_bg_scraping_20260908_1306.xlsx
 2026-09-08 13:25:34,587 | INFO    | ✔ Email sent
 2026-09-08 13:25:34,587 | INFO    | === Script finished ===
+2026-09-08 17:32:17,307 | INFO    | === Starting imot.bg scraper ===
+2026-09-08 17:32:17,644 | INFO    | Opening browser (headless)…
+2026-09-08 17:32:19,432 | INFO    | Loading first page: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen/do-2026?type_home=4~5~6~&kv_min=80&price_max=290000&raioni=46~47~
+2026-09-08 17:32:22,244 | INFO    | Total listings: 63
+2026-09-08 17:32:22,399 | INFO    | Scraped 40 listings from page 1
+2026-09-08 17:32:22,400 | INFO    | Planning to scrape up to 2 pages
+2026-09-08 17:32:22,400 | INFO    | Loading page 2: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen/do-2026/p-2?type_home=4~5~6~&kv_min=80&price_max=290000&raioni=46~47~
+2026-09-08 17:32:23,581 | INFO    | Scraped 23 listings from page 2
+2026-09-08 17:32:26,531 | INFO    | Loading page 3: https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-1/tristaen/do-2026/p-3?type_home=4~5~6~&kv_min=80&price_max=290000&raioni=46~47~
+2026-09-08 17:32:39,185 | INFO    | No more listings on page 3
+2026-09-08 17:32:39,221 | INFO    | Browser closed
+2026-09-08 17:32:39,239 | INFO    | Processing 63 listings...
+2026-09-08 17:32:51,473 | INFO    | [1/63] https://www.imot.bg/obiava-1c178644914153243-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:33:05,624 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:33:05,624 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:33:06,102 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:33:14,166 | INFO    | [2/63] https://www.imot.bg/obiava-1c174601650165992-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:33:27,780 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:33:27,781 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:33:28,266 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:33:36,563 | INFO    | [3/63] https://www.imot.bg/obiava-1c177755004572560-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:33:50,050 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:33:50,050 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:33:50,547 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:33:58,693 | INFO    | [4/63] https://www.imot.bg/obiava-1d178833628203575-prodava-chetiristaen-apartament-grad-sofiya-mladost-1-bul-andrey-saharov
+2026-09-08 17:34:12,231 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:34:12,231 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:34:12,712 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:34:20,695 | INFO    | [5/63] https://www.imot.bg/obiava-1c178817070958256-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-yerusalim
+2026-09-08 17:34:25,251 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178817070958256-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-yerusalim
+2026-09-08 17:34:33,496 | INFO    | [6/63] https://www.imot.bg/obiava-1c178886112420813-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-dimitar-mollov
+2026-09-08 17:34:37,126 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178886112420813-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-dimitar-mollov
+2026-09-08 17:34:45,876 | INFO    | [7/63] https://www.imot.bg/obiava-1c178721220335606-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:34:48,994 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178721220335606-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:34:57,505 | INFO    | [8/63] https://www.imot.bg/obiava-1c178038616419635-prodava-tristaen-apartament-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-09-08 17:35:01,792 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178038616419635-prodava-tristaen-apartament-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-09-08 17:35:10,488 | INFO    | [9/63] https://www.imot.bg/obiava-1c177945572223473-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:35:13,210 | INFO    | Успешно извлечена история: Начална: 225 000 € | 12.06.2026г. в 16.40 ч. <span class="price-down">- 6 000 €</span> → 219 000 € | 26.06.2026г. в 14.5...
+2026-09-08 17:35:13,210 | INFO    |   ✔ История на цената: Начална: 225 000 € | 12.06.2026г. в 16.40 ч. <span class="price-down">- 6 000 €</span> → 219 000 € | 26.06.2026г. в 14.50 ч. <span class="price-down">...
+2026-09-08 17:35:21,573 | INFO    | [10/63] https://www.imot.bg/obiava-1c177979151183149-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:35:24,743 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177979151183149-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:35:32,576 | INFO    | [11/63] https://www.imot.bg/obiava-1c177021045989738-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:35:36,626 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177021045989738-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:35:44,649 | INFO    | [12/63] https://www.imot.bg/obiava-1c177979109370630-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:35:47,739 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177979109370630-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:35:55,720 | INFO    | [13/63] https://www.imot.bg/obiava-1c178680998498010-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:35:59,478 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178680998498010-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:36:08,186 | INFO    | [14/63] https://www.imot.bg/obiava-1c175687968128664-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-yerusalim
+2026-09-08 17:36:12,060 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c175687968128664-prodava-tristaen-apartament-grad-sofiya-mladost-1-ul-yerusalim
+2026-09-08 17:36:20,632 | INFO    | [15/63] https://www.imot.bg/obiava-1c178705400762871-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:36:33,514 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:36:33,514 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:36:34,043 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:36:42,890 | INFO    | [16/63] https://www.imot.bg/obiava-1c177746188031498-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:36:48,077 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177746188031498-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:36:59,783 | INFO    | [17/63] https://www.imot.bg/obiava-1c177866413962910-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:37:13,016 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:37:13,016 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:37:13,659 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:37:23,152 | INFO    | [18/63] https://www.imot.bg/obiava-1c177866396371517-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:37:36,655 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:37:36,655 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:37:37,144 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:37:46,459 | INFO    | [19/63] https://www.imot.bg/obiava-1c178887270883170-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:37:51,114 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178887270883170-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:38:02,260 | INFO    |   → 2 нови снимки свалени (2 общо)
+2026-09-08 17:38:04,861 | INFO    | [20/63] https://www.imot.bg/obiava-1c178835092951725-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:38:17,048 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:38:17,048 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:38:17,564 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:38:25,949 | INFO    | [21/63] https://www.imot.bg/obiava-1c178500328560888-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:38:39,537 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:38:39,537 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:38:40,052 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:38:48,718 | INFO    | [22/63] https://www.imot.bg/obiava-1c176044074804016-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:38:54,044 | INFO    | Успешно извлечена история: Начална: 257 400 € | 16.01.2026г. в 10.21 ч. <span class="price-up">+ 5 600 €</span> → 263 000 €...
+2026-09-08 17:38:54,045 | INFO    |   ✔ История на цената: Начална: 257 400 € | 16.01.2026г. в 10.21 ч. <span class="price-up">+ 5 600 €</span> → 263 000 €...
+2026-09-08 17:39:05,602 | INFO    | [23/63] https://www.imot.bg/obiava-1c178818659490204-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:39:17,958 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:39:17,959 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:39:18,516 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:39:27,378 | INFO    | [24/63] https://www.imot.bg/obiava-1c176365146600264-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:39:41,039 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:39:41,039 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:39:41,506 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:39:50,409 | INFO    | [25/63] https://www.imot.bg/obiava-1c176405515624318-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:40:03,974 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:40:03,975 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:40:04,490 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:40:13,633 | INFO    | [26/63] https://www.imot.bg/obiava-1c178585009549377-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:40:27,321 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:40:27,321 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:40:27,831 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:40:36,475 | INFO    | [27/63] https://www.imot.bg/obiava-1c178116629132536-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:40:41,199 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178116629132536-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:40:51,240 | INFO    | [28/63] https://www.imot.bg/obiava-1c178844831493148-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:41:03,945 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:41:03,945 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:41:04,505 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:41:14,094 | INFO    | [29/63] https://www.imot.bg/obiava-1c178654789844005-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:41:19,425 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178654789844005-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:41:30,148 | INFO    | [30/63] https://www.imot.bg/obiava-1c178176600653378-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:41:34,624 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178176600653378-prodava-tristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:41:46,134 | INFO    | [31/63] https://www.imot.bg/obiava-1c175456261691767-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:41:49,156 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c175456261691767-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:41:58,444 | INFO    | [32/63] https://www.imot.bg/obiava-1c177567390791418-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:42:01,162 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177567390791418-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:42:07,366 | WARNING |   → Няма намерени снимки за обявата
+2026-09-08 17:42:10,014 | INFO    | [33/63] https://www.imot.bg/obiava-1c178584999163085-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:42:22,240 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:42:22,240 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:42:22,815 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:42:31,112 | INFO    | [34/63] https://www.imot.bg/obiava-1c177547533880236-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:42:44,715 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:42:44,715 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:42:45,221 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:42:54,494 | INFO    | [35/63] https://www.imot.bg/obiava-1c177305169639447-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:42:59,586 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177305169639447-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:43:10,220 | INFO    | [36/63] https://www.imot.bg/obiava-1c177755231295186-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:43:22,692 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:43:22,693 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:43:23,243 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:43:32,203 | INFO    | [37/63] https://www.imot.bg/obiava-1c177780481435723-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:43:45,826 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:43:45,826 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:43:46,325 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:43:54,900 | INFO    | [38/63] https://www.imot.bg/obiava-1c177781409280725-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:44:08,401 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:44:08,401 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:44:08,931 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:44:17,643 | INFO    | [39/63] https://www.imot.bg/obiava-1c174639672082106-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:44:31,807 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:44:31,807 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:44:32,279 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:44:41,680 | INFO    | [40/63] https://www.imot.bg/obiava-1c178756619311655-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:44:55,422 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:44:55,422 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:44:55,916 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:45:05,066 | INFO    | [41/63] https://www.imot.bg/obiava-1c178706179581533-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:45:10,636 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178706179581533-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:45:21,596 | INFO    | [42/63] https://www.imot.bg/obiava-1c178654484268637-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:45:34,251 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:45:34,251 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:45:34,774 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:45:43,842 | INFO    | [43/63] https://www.imot.bg/obiava-1c177781632846611-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:45:57,470 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:45:57,470 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:45:58,022 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:46:06,255 | INFO    | [44/63] https://www.imot.bg/obiava-1c177867754253094-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:46:11,152 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177867754253094-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:46:20,177 | INFO    | [45/63] https://www.imot.bg/obiava-1c178791204729327-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:46:32,883 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:46:32,883 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:46:33,429 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:46:43,226 | INFO    | [46/63] https://www.imot.bg/obiava-1c177910772065141-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:46:48,003 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177910772065141-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:46:57,646 | INFO    | [47/63] https://www.imot.bg/obiava-1c177867305064546-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:01,365 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177867305064546-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:10,366 | INFO    | [48/63] https://www.imot.bg/obiava-1c176175477427979-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:13,449 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c176175477427979-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:23,248 | INFO    | [49/63] https://www.imot.bg/obiava-1c178721505657507-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:27,100 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178721505657507-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:39,576 | INFO    | [50/63] https://www.imot.bg/obiava-1c177874458737213-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:43,410 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c177874458737213-prodava-tristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:47:53,014 | INFO    | [51/63] https://www.imot.bg/obiava-1c177521461301083-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:48:05,516 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:48:05,517 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:48:06,135 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:48:15,493 | INFO    | [52/63] https://www.imot.bg/obiava-1c178233003322708-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:48:20,294 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178233003322708-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:48:31,205 | INFO    | [53/63] https://www.imot.bg/obiava-1c178826057194610-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:48:35,153 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178826057194610-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:48:46,083 | INFO    | [54/63] https://www.imot.bg/obiava-1c178539283363883-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:48:58,974 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:48:58,974 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:48:59,513 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:49:09,144 | INFO    | [55/63] https://www.imot.bg/obiava-1c178811112164852-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:49:14,041 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178811112164852-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:49:24,910 | INFO    | [56/63] https://www.imot.bg/obiava-1c178733137521678-prodava-tristaen-apartament-grad-sofiya-mladost-3
+2026-09-08 17:49:38,423 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:49:38,424 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:49:39,021 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:49:48,169 | INFO    | [57/63] https://www.imot.bg/obiava-1c178704605169979-prodava-tristaen-apartament-grad-sofiya-mladost-3-ul-sveto-preobrazhenie
+2026-09-08 17:49:52,953 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1c178704605169979-prodava-tristaen-apartament-grad-sofiya-mladost-3-ul-sveto-preobrazhenie
+2026-09-08 17:50:05,691 | INFO    | [58/63] https://www.imot.bg/obiava-1d177746167195705-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:50:18,068 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:50:18,068 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:50:18,604 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:50:28,300 | INFO    | [59/63] https://www.imot.bg/obiava-1d176339758338442-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:50:41,924 | WARNING |   ⚠ Ценова история неуспешна: Message:
+2026-09-08 17:50:41,924 | WARNING |   Chrome crash detected – restarting Selenium driver
+2026-09-08 17:50:42,487 | INFO    |   ✔ Selenium driver restarted
+2026-09-08 17:50:51,959 | INFO    | [60/63] https://www.imot.bg/obiava-1d178737498346629-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:50:57,320 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1d178737498346629-prodava-chetiristaen-apartament-grad-sofiya-mladost-1
+2026-09-08 17:51:08,242 | INFO    | [61/63] https://www.imot.bg/obiava-1d177995801085375-prodava-chetiristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:51:11,643 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1d177995801085375-prodava-chetiristaen-apartament-grad-sofiya-mladost-2
+2026-09-08 17:51:20,381 | INFO    |   ℹ listing_id not in CDN URLs, using fallback images for 1d177995801085375
+2026-09-08 17:51:22,756 | INFO    | [62/63] https://www.imot.bg/obiava-1f178842317155048-prodava-mezonet-grad-sofiya-mladost-1
+2026-09-08 17:51:26,654 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1f178842317155048-prodava-mezonet-grad-sofiya-mladost-1
+2026-09-08 17:51:38,498 | INFO    | [63/63] https://www.imot.bg/obiava-1f177312693855767-prodava-mezonet-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-09-08 17:51:42,139 | WARNING |   ⚠ Няма извлечена история за https://www.imot.bg/obiava-1f177312693855767-prodava-mezonet-grad-sofiya-mladost-1-bul-tsarigradsko-shose
+2026-09-08 17:51:54,206 | INFO    | Finished. Good listings with images: 0/63
+2026-09-08 17:51:54,210 | INFO    | Извлечени ценови истории: 2 от 63 обяви
+2026-09-08 17:51:54,228 | INFO    | Loaded history: 263 rows
+2026-09-08 17:51:54,394 | INFO    | New: 1  |  Changed: 0  |  Sold: 0  |  Total unique: 264
+2026-09-08 17:51:54,471 | INFO    | HTML dashboard written to docs/index.html
+2026-09-08 17:51:54,920 | INFO    | Excel saved: imot_bg_scraping_20260908_1732.xlsx
+2026-09-08 17:51:57,660 | INFO    | ✔ Email sent
+2026-09-08 17:51:57,660 | INFO    | === Script finished ===
