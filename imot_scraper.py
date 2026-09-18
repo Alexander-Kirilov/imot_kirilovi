@@ -899,6 +899,13 @@ def _img_cell(paths_str):
     return "".join(html_parts) if html_parts else "—"
 
 
+def _attr(value):
+    """Екранира стойност за HTML атрибут (data-loc, data-constr…)."""
+    return (str(value or "")
+            .replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
 def _age_of(row):
     """Възраст в дни — от готовата колона, иначе пресметната от 'Добавена'."""
     days = row.get(COL_AGE_DAYS)
@@ -939,7 +946,11 @@ def _build_rows(df, cols):
             floor_num = int(float(floor_val)) if pd.notna(floor_val) and floor_val != "" else ""
         except:
             floor_num = ""
-        tr_attrs = f'data-loc="{loc_val}" data-price="{price_num}" data-floor="{floor_num}"'
+        constr_val = str(row.get(COL_CONSTRUCTION, "") or "").strip()
+        if constr_val.lower() in ("nan", "none"):
+            constr_val = ""
+        tr_attrs = (f'data-loc="{_attr(loc_val)}" data-price="{price_num}" '
+                    f'data-floor="{floor_num}" data-constr="{_attr(constr_val)}"')
 
         cells = []
         for col_key in cols:
@@ -1149,6 +1160,22 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         key=lambda x: x.lower()
     )
     locations_json = _json.dumps(all_locs, ensure_ascii=False)
+
+    # ── Уникални видове строителство за dropdown ─────────────────────────────
+    if COL_CONSTRUCTION in df_input.columns:
+        constr_vals = {
+            str(v).strip() for v in df_input[COL_CONSTRUCTION].dropna()
+            if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+        }
+        # Има ли изобщо обяви без посочен вид → добавяме опция за тях
+        has_unknown = bool(
+            (df_input[COL_CONSTRUCTION].fillna("").astype(str).str.strip() == "").any()
+        )
+    else:
+        constr_vals, has_unknown = set(), False
+    all_constr = sorted(constr_vals, key=lambda x: x.lower())
+    constructions_json = _json.dumps(all_constr, ensure_ascii=False)
+    has_unknown_constr_json = _json.dumps(has_unknown)
 
     # ── Full HTML ─────────────────────────────────────────────────────────────
     dashboard_html = f"""<!DOCTYPE html>
@@ -1544,6 +1571,12 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     </select>
   </div>
   <div class="filter-group">
+    <span class="filter-label">Строителство</span>
+    <select id="f-constr">
+      <option value="">Всички</option>
+    </select>
+  </div>
+  <div class="filter-group">
     <span class="filter-label">Цена</span>
     <input type="number" id="f-price-min" placeholder="от €" min="0" step="1000">
     <span class="filter-sep">–</span>
@@ -1606,6 +1639,10 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 <script>
 // ── Location data (injected from Python) ─────────────────────────────────────
 const ALL_LOCATIONS = {locations_json};
+const ALL_CONSTRUCTIONS = {constructions_json};
+const HAS_UNKNOWN_CONSTR = {has_unknown_constr_json};
+// Стойност-маркер за "обяви без посочен вид строителство"
+const CONSTR_NONE = '__none__';
 
 // ── Populate district dropdown ────────────────────────────────────────────────
 (function () {{
@@ -1616,6 +1653,23 @@ const ALL_LOCATIONS = {locations_json};
     opt.textContent = loc;
     sel.appendChild(opt);
   }});
+}})();
+
+// ── Populate construction dropdown ────────────────────────────────────────────
+(function () {{
+  const sel = document.getElementById('f-constr');
+  ALL_CONSTRUCTIONS.forEach(c => {{
+    const opt = document.createElement('option');
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  }});
+  if (HAS_UNKNOWN_CONSTR) {{
+    const opt = document.createElement('option');
+    opt.value = CONSTR_NONE;
+    opt.textContent = 'Без посочен вид';
+    sel.appendChild(opt);
+  }}
 }})();
 
 // ── Tab navigation ────────────────────────────────────────────────────────────
@@ -1661,6 +1715,7 @@ let activeTab = 'all';
 // ── Unified filter + search ───────────────────────────────────────────────────
 function applyFilters() {{
   const loc      = document.getElementById('f-loc').value.trim().toLowerCase();
+  const constr   = document.getElementById('f-constr').value.trim().toLowerCase();
   const priceMin = parseFloat(document.getElementById('f-price-min').value) || null;
   const priceMax = parseFloat(document.getElementById('f-price-max').value) || null;
   const floorMin = parseFloat(document.getElementById('f-floor-min').value) || null;
@@ -1671,7 +1726,7 @@ function applyFilters() {{
   const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
 
   // Проверяваме дали има активен филтър
-  const hasFilter = loc || priceMin !== null || priceMax !== null ||
+  const hasFilter = loc || constr || priceMin !== null || priceMax !== null ||
                     floorMin !== null || floorMax !== null;
 
   let totalVisible = 0;
@@ -1684,11 +1739,15 @@ function applyFilters() {{
     let visibleInTab = 0;
 
     tbl.querySelectorAll('tbody tr').forEach(row => {{
-      const rowLoc   = (row.dataset.loc   || '').toLowerCase();
-      const rowPrice = parseFloat(row.dataset.price) || null;
-      const rowFloor = parseFloat(row.dataset.floor) || null;
+      const rowLoc    = (row.dataset.loc    || '').toLowerCase();
+      const rowConstr = (row.dataset.constr || '').toLowerCase();
+      const rowPrice  = parseFloat(row.dataset.price) || null;
+      const rowFloor  = parseFloat(row.dataset.floor) || null;
 
       const locOk   = !loc      || rowLoc === loc;
+      // CONSTR_NONE хваща обявите, за които imot.bg не дава вид строителство
+      const constrOk = !constr ||
+                       (constr === CONSTR_NONE ? rowConstr === '' : rowConstr === constr);
       const pMinOk  = priceMin === null || (rowPrice !== null && rowPrice >= priceMin);
       const pMaxOk  = priceMax === null || (rowPrice !== null && rowPrice <= priceMax);
       const fMinOk  = floorMin === null || (rowFloor !== null && rowFloor >= floorMin);
@@ -1696,7 +1755,7 @@ function applyFilters() {{
       // Текстово търсене само за активния таб
       const textOk  = !isActive || !q || row.textContent.toLowerCase().includes(q);
 
-      const show = locOk && pMinOk && pMaxOk && fMinOk && fMaxOk && textOk;
+      const show = locOk && constrOk && pMinOk && pMaxOk && fMinOk && fMaxOk && textOk;
       row.style.display = show ? '' : 'none';
       if (show && isActive) visibleInTab++;
     }});
@@ -1715,13 +1774,15 @@ function applyFilters() {{
 }}
 
 // ── Filter inputs ─────────────────────────────────────────────────────────────
-['f-loc', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
-  document.getElementById(id).addEventListener('input', applyFilters);
+['f-loc', 'f-constr', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+  const el = document.getElementById(id);
+  el.addEventListener('input', applyFilters);
+  // Някои браузъри не пращат 'input' при избор от <select>
+  if (el.tagName === 'SELECT') el.addEventListener('change', applyFilters);
 }});
 
 document.getElementById('f-reset').addEventListener('click', () => {{
-  document.getElementById('f-loc').value = '';
-  ['f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+  ['f-loc', 'f-constr', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
     document.getElementById(id).value = '';
   }});
   // Изчистваме и текстовото търсене на активния таб
