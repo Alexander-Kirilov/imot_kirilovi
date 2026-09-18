@@ -113,6 +113,10 @@ COL_SITE_PRICE_HISTORY = 'Свалена_ценова_история'
 COL_IMAGES = 'Image_Paths'  # comma-separated relative paths
 COL_LAST_PRICE_CHANGE_DATE = 'Last_Price_Change_Date'
 COL_BULK_IMPORT = 'Bulk_Import'  # True ако имотът е добавен при bulk run (>5 нови наведнъж)
+COL_SITE_DATE = 'Site_Ad_Date'  # Датата от самата обява (div.adPrice > div.info)
+COL_SITE_DATE_KIND = 'Site_Ad_Date_Kind'  # "Коригирана" / "Публикувана" / …
+COL_FIRST_SCRAPED = 'First_Scraped_Date'  # Кога скраперът е видял обявата за пръв път
+COL_AGE_DAYS = 'Age_Days'  # На колко дни е обявата спрямо COL_FIRST_SEEN
 
 # Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
 BULK_IMPORT_THRESHOLD = 5
@@ -151,6 +155,88 @@ def normalize_location(loc):
     if orig != loc:
         logger.debug(f"Normalized location: {orig} → {loc}")
     return loc
+
+
+BG_MONTHS = {
+    'януари': 1, 'февруари': 2, 'март': 3, 'април': 4, 'май': 5, 'юни': 6,
+    'юли': 7, 'август': 8, 'септември': 9, 'октомври': 10, 'ноември': 11, 'декември': 12,
+}
+
+# "Коригирана в 16:01 на 17 септември, 2026 год." / "Публикувана на 3 март, 2026 год."
+AD_DATE_RE = re.compile(
+    r'(Коригирана|Публикувана|Обновена|Актуализирана|Добавена)\s*'
+    r'(?:в\s*\d{1,2}:\d{2}\s*)?на\s*(\d{1,2})\s+([А-Яа-я]+)\s*,?\s*(\d{4})',
+    re.IGNORECASE,
+)
+
+# Където imot.bg държи реда с датата на обявата
+AD_DATE_SELECTORS = ('div.adPrice div.info', 'div.adPrice', 'div.adv', 'div.advHeader')
+
+
+def parse_ad_date_from_html(raw_html):
+    """Вади датата на обявата от самата страница в imot.bg.
+
+    Връща ('YYYY-MM-DD', вид) напр. ('2026-09-17', 'Коригирана'), или ('', '').
+    """
+    if not raw_html:
+        return "", ""
+
+    text = ""
+    try:
+        soup = BeautifulSoup(raw_html, 'html.parser')
+        for sel in AD_DATE_SELECTORS:
+            el = soup.select_one(sel)
+            if el:
+                candidate = el.get_text(" ", strip=True)
+                if AD_DATE_RE.search(candidate):
+                    text = candidate
+                    break
+        if not text:
+            # Последен опит — целият текст на страницата
+            text = soup.get_text(" ", strip=True)
+    except Exception as soup_err:
+        logger.debug(f"parse_ad_date: BeautifulSoup гръмна ({soup_err}) → суров HTML")
+        text = str(raw_html)
+
+    m = AD_DATE_RE.search(text.replace("\xa0", " "))
+    if not m:
+        return "", ""
+
+    month = BG_MONTHS.get(m.group(3).lower())
+    if not month:
+        logger.debug(f"parse_ad_date: непознат месец '{m.group(3)}'")
+        return "", ""
+    try:
+        parsed = datetime(int(m.group(4)), month, int(m.group(2)))
+    except ValueError:
+        logger.warning(f"parse_ad_date: невалидна дата в '{m.group(0)}'")
+        return "", ""
+
+    return parsed.strftime("%Y-%m-%d"), m.group(1).capitalize()
+
+
+def days_since(date_str):
+    """Колко дни са минали от 'YYYY-MM-DD'. None ако липсва/е невалидна дата."""
+    s = str(date_str or "").strip()[:10]
+    if not s:
+        return None
+    try:
+        d = datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    delta = (datetime.now().date() - d).days
+    return delta if delta >= 0 else 0
+
+
+def fmt_age(days):
+    """'днес' / '1 ден' / '17 дни' / '—'."""
+    if days is None:
+        return "—"
+    if days == 0:
+        return "днес"
+    if days == 1:
+        return "1 ден"
+    return f"{days} дни"
 
 
 def parse_total_ads(page_content):
@@ -495,7 +581,10 @@ def scrape_site_price_histories_selenium(links):
         return {}
 
     total = len(links)
-    result = {url: {"price_history": "", "images": ""} for url in links}
+    result = {
+        url: {"price_history": "", "images": "", "site_date": "", "site_date_kind": ""}
+        for url in links
+    }
 
     logger.info(f"Processing {total} listings...")
 
@@ -582,6 +671,18 @@ def scrape_site_price_histories_selenium(links):
                     logger.debug(f"showpricechange failed: {js_err}")
 
                 page_html = driver.page_source
+
+                # ── Дата на обявата (Коригирана/Публикувана) ──
+                site_date, site_date_kind = parse_ad_date_from_html(page_html)
+                if site_date:
+                    result[url]["site_date"] = site_date
+                    result[url]["site_date_kind"] = site_date_kind
+                    logger.info(
+                        f"  📅 {site_date_kind}: {site_date} ({fmt_age(days_since(site_date))})"
+                    )
+                else:
+                    logger.debug(f"  ⚠ Няма дата на обявата в страницата за {url}")
+
                 price_hist = parse_site_price_history_html(page_html)
 
                 if price_hist:
@@ -618,6 +719,18 @@ def scrape_site_price_histories_selenium(links):
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 })
                 p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+                # Fallback за датата, ако Selenium е пропаднал
+                if not result[url]["site_date"]:
+                    site_date, site_date_kind = parse_ad_date_from_html(p_page.content())
+                    if site_date:
+                        result[url]["site_date"] = site_date
+                        result[url]["site_date_kind"] = site_date_kind
+                        logger.info(
+                            f"  📅 {site_date_kind}: {site_date} "
+                            f"({fmt_age(days_since(site_date))}) [Playwright]"
+                        )
+
                 image_urls = extract_images(p_page, url, max_images=2)
                 if image_urls:
                     img_paths, new_count = download_images_from_urls(url, image_urls, max_images=2)
@@ -696,6 +809,32 @@ def _img_cell(paths_str):
     return "".join(html_parts) if html_parts else "—"
 
 
+def _age_of(row):
+    """Възраст в дни — от готовата колона, иначе пресметната от 'Добавена'."""
+    days = row.get(COL_AGE_DAYS)
+    try:
+        if pd.notna(days) and days != "":
+            return int(days)
+    except (TypeError, ValueError):
+        pass
+    return days_since(row.get(COL_FIRST_SEEN, ""))
+
+
+def _added_cell(row):
+    """Клетка 'Добавена': дата от imot.bg + на колко дни е обявата."""
+    date_txt = str(row.get(COL_FIRST_SEEN, "") or "").strip()
+    if not date_txt or date_txt == "nan":
+        return "—"
+    kind = str(row.get(COL_SITE_DATE_KIND, "") or "").strip()
+    site_date = str(row.get(COL_SITE_DATE, "") or "").strip()
+    if kind and site_date:
+        title = f' title="{kind} на {site_date} — по данни от imot.bg"'
+    else:
+        title = ' title="Дата на първо засичане от скрапера (imot.bg не даде дата)"'
+    return (f'<span{title}>{date_txt}'
+            f'<br><small class="age">{fmt_age(_age_of(row))}</small></span>')
+
+
 def _build_rows(df, cols):
     rows_html = []
     for _, row in df.iterrows():
@@ -733,6 +872,12 @@ def _build_rows(df, cols):
 
             elif col_key == COL_IMAGES:
                 cells.append(f"<td>{_img_cell(val)}</td>")
+
+            elif col_key == COL_FIRST_SEEN:
+                cells.append(f"<td>{_added_cell(row)}</td>")
+
+            elif col_key == COL_AGE_DAYS:
+                cells.append(f'<td class="age">{fmt_age(_age_of(row))}</td>')
 
             elif col_key == COL_SITE_PRICE_HISTORY:
                 text = str(val).strip() if pd.notna(val) else ""
@@ -814,9 +959,17 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
         # Изключваме имоти добавени при bulk run (скраперът ги е видял за пръв път
         # в рун, където са добавени >5 наведнъж — т.е. не са реално нови обяви)
         if COL_BULK_IMPORT in df_active.columns:
-            mask_not_bulk = ~df_active[COL_BULK_IMPORT].fillna(False).astype(bool)
+            is_bulk = df_active[COL_BULK_IMPORT].fillna(False).astype(bool)
         else:
-            mask_not_bulk = pd.Series(True, index=df_active.index)
+            is_bulk = pd.Series(False, index=df_active.index)
+        # …но когато имаме реална дата от imot.bg, тя е меродавна и bulk флагът не важи
+        if COL_SITE_DATE in df_active.columns:
+            has_site_date = (
+                df_active[COL_SITE_DATE].fillna("").astype(str).str.strip() != ""
+            )
+        else:
+            has_site_date = pd.Series(False, index=df_active.index)
+        mask_not_bulk = (~is_bulk) | has_site_date
         df_recent = df_active[mask_recent & mask_not_bulk].copy()
         df_recent = df_recent.sort_values(COL_FIRST_SEEN, ascending=False)
     else:
@@ -860,20 +1013,22 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     changed_table = _table(
         df_changed_all,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN, COL_SCRAPED_DATE,
          COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Последно виждана", "История на цената", "Свалена ценова история", ""],
+         "Добавена", "Последно виждана", "История на цената",
+         "Свалена ценова история", ""],
         css_id="changed-table",
     )
 
     all_table = _table(
         df_active,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_SCRAPED_DATE,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN, COL_SCRAPED_DATE,
          COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Последно виждана", "История на цената", "Свалена ценова история", ""],
+         "Добавена", "Последно виждана", "История на цената",
+         "Свалена ценова история", ""],
         css_id="all-table",
     )
 
@@ -1194,6 +1349,12 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   .site-history {{
     color: #7dd3fc;
   }}
+  /* възраст на обявата под датата "Добавена" */
+  .age {{
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+  }}
   .price-down {{ color: var(--green) !important; font-weight: 600; }}
   .price-up {{ color: var(--red) !important; font-weight: 600; }}
 
@@ -1301,7 +1462,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
 
   <section id="recent">
     <h2>Нови обяви <span class="badge">{n_recent}</span></h2>
-    <p class="section-desc">Обяви добавени за първи път през последните 5 дни (без bulk import).</p>
+    <p class="section-desc">Обяви с дата от imot.bg (Коригирана/Публикувана) през последните 5 дни.</p>
     <div class="search-wrap">
       <input type="text" id="recent-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
@@ -1577,6 +1738,22 @@ df_new[COL_IMAGES] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("images", "")
 )
 
+# ── Дата на обявата, свалена от самата страница в imot.bg ─────────────────────
+df_new[COL_SITE_DATE] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("site_date", "")
+)
+df_new[COL_SITE_DATE_KIND] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("site_date_kind", "")
+)
+num_with_date = df_new[COL_SITE_DATE].str.strip().astype(bool).sum()
+logger.info(f"Извлечени дати на обявите: {num_with_date} от {len(df_new)} обяви")
+
+# "Добавена" = датата от сайта; ако липсва → днешната дата (за съвсем нови обяви;
+# за вече познати обяви по-долу се пази старата стойност)
+df_new[COL_FIRST_SEEN] = df_new[COL_SITE_DATE].where(
+    df_new[COL_SITE_DATE].astype(str).str.strip() != "", TODAY
+)
+
 df_history = pd.DataFrame()
 if os.path.exists(HISTORY_FILE):
     try:
@@ -1595,10 +1772,22 @@ if not df_history.empty:
         (COL_IMAGES, ""),
         (COL_LAST_PRICE_CHANGE_DATE, ""),
         (COL_BULK_IMPORT, False),
+        (COL_SITE_DATE, ""),
+        (COL_SITE_DATE_KIND, ""),
+        (COL_FIRST_SCRAPED, ""),
     ]:
         if col not in df_history.columns:
             df_history[col] = default
     df_history[COL_SOLD] = df_history[COL_SOLD].fillna(False)
+
+    # Миграция: досегашният First_Seen означаваше "кога скраперът я видя за пръв път"
+    # → преместваме го в отделна колона, за да освободим First_Seen за датата от сайта.
+    df_history[COL_FIRST_SCRAPED] = df_history.apply(
+        lambda r: str(r.get(COL_FIRST_SCRAPED) or "").strip()
+                  or str(r.get(COL_FIRST_SEEN) or "").strip()
+                  or str(r.get(COL_SCRAPED_DATE) or "").strip(),
+        axis=1,
+    )
 
 df_all = df_history.copy()
 if not df_all.empty:
@@ -1610,6 +1799,9 @@ if not df_all.empty:
         (COL_IMAGES, ""),
         (COL_LAST_PRICE_CHANGE_DATE, ""),
         (COL_BULK_IMPORT, False),
+        (COL_SITE_DATE, ""),
+        (COL_SITE_DATE_KIND, ""),
+        (COL_FIRST_SCRAPED, ""),
     ]:
         if col not in df_all.columns:
             df_all[col] = default
@@ -1671,7 +1863,32 @@ for _, row in df_new.iterrows():
         old_scraped_date = df_all.at[link, COL_SCRAPED_DATE]
         new_price = row_dict.get(COL_PRICE)
         new_scraped_date = TODAY
-        row_dict[COL_FIRST_SEEN] = df_all.at[link, COL_FIRST_SEEN] or old_scraped_date
+        # ── Кога скраперът е видял обявата за пръв път (отделно от датата на сайта) ──
+        old_first_scraped = str(
+            df_all.at[link, COL_FIRST_SCRAPED] if COL_FIRST_SCRAPED in df_all.columns else ""
+        ).strip()
+        if not old_first_scraped:
+            old_first_scraped = str(df_all.at[link, COL_FIRST_SEEN] or old_scraped_date or "").strip()
+        row_dict[COL_FIRST_SCRAPED] = old_first_scraped
+
+        # ── "Добавена" = датата от самата обява в imot.bg ──
+        site_date = str(row_dict.get(COL_SITE_DATE) or "").strip()
+        if not site_date and COL_SITE_DATE in df_all.columns:
+            # Тази обиколка не успя да прочете датата → пазим предишно свалената
+            site_date = str(df_all.at[link, COL_SITE_DATE] or "").strip()
+            if site_date:
+                row_dict[COL_SITE_DATE] = site_date
+                if not str(row_dict.get(COL_SITE_DATE_KIND) or "").strip():
+                    row_dict[COL_SITE_DATE_KIND] = str(
+                        df_all.at[link, COL_SITE_DATE_KIND]
+                        if COL_SITE_DATE_KIND in df_all.columns else ""
+                    )
+        row_dict[COL_FIRST_SEEN] = (
+            site_date
+            or str(df_all.at[link, COL_FIRST_SEEN] or "").strip()
+            or old_first_scraped
+        )
+
         existing_images = df_all.at[link, COL_IMAGES] if COL_IMAGES in df_all.columns else ""
 
         if existing_images and not row_dict.get(COL_IMAGES):
@@ -1680,6 +1897,8 @@ for _, row in df_new.iterrows():
         for col in df_all.columns:
             if col in row_dict and col != COL_PRICE_HISTORY and col != COL_FIRST_SEEN:
                 df_all.at[link, col] = row_dict[col]
+        # First_Seen вече идва от обявата, затова го записваме изрично
+        df_all.at[link, COL_FIRST_SEEN] = row_dict[COL_FIRST_SEEN]
         if COL_SITE_PRICE_HISTORY in row_dict:
             old_site_hist = str(df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else "") or ""
             new_site_hist = str(row_dict[COL_SITE_PRICE_HISTORY] or "").strip()
@@ -1710,7 +1929,9 @@ for _, row in df_new.iterrows():
         if pd.notna(row_dict.get(COL_PRICE)):
             row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
         row_dict[COL_SOLD] = False
-        row_dict[COL_FIRST_SEEN] = TODAY
+        row_dict[COL_FIRST_SCRAPED] = TODAY
+        # "Добавена" = датата от обявата; ако сайтът не я дава → днес
+        row_dict[COL_FIRST_SEEN] = str(row_dict.get(COL_SITE_DATE) or "").strip() or TODAY
         row_dict[COL_BULK_IMPORT] = len(df_new_only) > BULK_IMPORT_THRESHOLD
         df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
 
@@ -1725,6 +1946,11 @@ if not df_history.empty:
             df_all.loc[df_all[COL_LINK].isin(sold_links), COL_SOLD] = True
 
 df_all = df_all.drop_duplicates(subset=[COL_LINK], keep='last').reset_index(drop=True)
+
+# ── На колко дни е всяка обява спрямо "Добавена" (преизчислява се всеки run) ──
+df_all[COL_AGE_DAYS] = pd.array(
+    [days_since(v) for v in df_all[COL_FIRST_SEEN]], dtype="Int64"
+)
 
 logger.info(
     f"New: {len(df_new_only)}  |  Changed: {len(df_changed)}  |  "
@@ -1753,7 +1979,11 @@ df_export = df_export.rename(columns={
     COL_PRICE_PER_SQM: 'Price per m² (numeric)',
     COL_SIZE: 'Size (numeric)',
     COL_SCRAPED_DATE: 'Scraped Date',
-    COL_FIRST_SEEN: 'First Seen Date',
+    COL_FIRST_SEEN: 'Added Date (imot.bg)',
+    COL_SITE_DATE: 'Ad Date (imot.bg)',
+    COL_SITE_DATE_KIND: 'Ad Date Type',
+    COL_FIRST_SCRAPED: 'First Scraped Date',
+    COL_AGE_DAYS: 'Age (days)',
     COL_LOCATION: 'Location',
     COL_TITLE: 'Title',
     COL_FLOOR: 'Floor',
@@ -1859,6 +2089,13 @@ a{color:#4f9cf9;text-decoration:none}
                     cells.append(f"<td>{fmt_m(v)}</td>")
                 elif col_name == 'Price_EUR_old':
                     cells.append(f"<td style='text-decoration:line-through;color:#999'>{fmt_p(v)}</td>")
+                elif col_name == COL_FIRST_SEEN:
+                    d = str(v).strip() if pd.notna(v) else ""
+                    age_txt = fmt_age(days_since(d))
+                    cells.append(
+                        f"<td>{d or '—'}<br>"
+                        f"<span style='color:#999;font-size:11px'>{age_txt}</span></td>"
+                    )
                 else:
                     cells.append(f"<td{td_cls}>{v if pd.notna(v) and v != '' else '—'}</td>")
             tbl_rows.append("<tr>" + "".join(cells) + "</tr>")
@@ -1871,8 +2108,9 @@ a{color:#4f9cf9;text-decoration:none}
 
     if not df_new_only.empty:
         tbl = to_html_table(df_new_only,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SITE_PRICE_HISTORY, COL_LINK],
-                            ["Локация", "Цена", "Площ", "€/m²", "История (сайт)", ""])
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                             COL_FIRST_SEEN, COL_SITE_PRICE_HISTORY, COL_LINK],
+                            ["Локация", "Цена", "Площ", "€/m²", "Добавена", "История (сайт)", ""])
         new_section = f"""<h3><span class="pill new">НОВИ</span> &nbsp;{len(df_new_only)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_changed.empty:
