@@ -117,6 +117,13 @@ COL_SITE_DATE = 'Site_Ad_Date'  # Датата от самата обява (div
 COL_SITE_DATE_KIND = 'Site_Ad_Date_Kind'  # "Коригирана" / "Публикувана" / …
 COL_FIRST_SCRAPED = 'First_Scraped_Date'  # Кога скраперът е видял обявата за пръв път
 COL_AGE_DAYS = 'Age_Days'  # На колко дни е обявата спрямо COL_FIRST_SEEN
+COL_CONSTRUCTION = 'Construction_Type'  # Вид строителство: Тухла / Панел / ЕПК / …
+
+# Текстови колони, които се пазят като низ (без NaN) при запис в parquet/Excel
+TEXT_COLS = (
+    COL_SITE_DATE, COL_SITE_DATE_KIND, COL_FIRST_SCRAPED,
+    COL_FIRST_SEEN, COL_CONSTRUCTION,
+)
 
 # Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
 BULK_IMPORT_THRESHOLD = 5
@@ -213,6 +220,69 @@ def parse_ad_date_from_html(raw_html):
         return "", ""
 
     return parsed.strftime("%Y-%m-%d"), m.group(1).capitalize()
+
+
+# Вид строителство, както го изписва imot.bg (за разпознаване в свободен текст)
+CONSTRUCTION_TYPES = (
+    'Метална конструкция', 'Монолитна', 'Монолит', 'Сглобяема',
+    'Гредоред', 'Тухла', 'Панел', 'ЕПК', 'ПК',
+)
+
+
+def _clean_construction(raw):
+    """'Тухла, ' → 'Тухла'. Връща '' ако вместо вид е попаднала годината."""
+    txt = str(raw or "").replace("\xa0", " ").strip().strip(",").strip()
+    if not txt:
+        return ""
+    # Когато обявата няма вид строителство, първият <strong> е годината
+    if re.search(r'\d{4}', txt) or 'експлоатация' in txt.lower():
+        return ""
+    return txt
+
+
+def _construction_from_text(text):
+    """Търси вид строителство по речник — за текста от списъчната страница."""
+    s = str(text or "")
+    for name in CONSTRUCTION_TYPES:
+        if re.search(rf'(?<![А-Яа-яA-Za-z]){re.escape(name)}(?![А-Яа-яA-Za-z])',
+                     s, re.IGNORECASE):
+            return name
+    return ""
+
+
+def parse_construction_from_html(raw_html):
+    """Вид строителство от страницата на обявата.
+
+    Структурата в imot.bg е:
+        <div class="adParams">
+          …
+          <div>Строителство:<br><strong>Тухла, </strong>
+               Въведен в експлоатация <strong>2023 г.</strong></div>
+        </div>
+    Връща напр. 'Тухла', или '' ако обявата не посочва вид.
+    """
+    if not raw_html:
+        return ""
+    try:
+        soup = BeautifulSoup(raw_html, 'html.parser')
+    except Exception as soup_err:
+        logger.debug(f"parse_construction: BeautifulSoup гръмна ({soup_err})")
+        return ""
+
+    params = soup.select_one('div.adParams')
+    if not params:
+        return ""
+
+    for block in params.find_all('div'):
+        block_text = block.get_text(" ", strip=True)
+        if not block_text.startswith('Строителство'):
+            continue
+        strong = block.find('strong')
+        value = _clean_construction(strong.get_text(" ", strip=True) if strong else "")
+        # Ако първият <strong> е годината → пробваме по речник в целия блок
+        return value or _construction_from_text(block_text)
+
+    return ""
 
 
 def days_since(date_str):
@@ -318,6 +388,8 @@ def parse_page(page_content, pg_num=None):
                 COL_TOTAL_FLOORS: total_floors,
                 COL_YEAR: year,
                 COL_INFO: info_text,
+                # Първо предположение от списъка; детайлната страница го уточнява
+                COL_CONSTRUCTION: _construction_from_text(info_text),
                 COL_LINK: href,
                 COL_SCRAPED_DATE: TODAY,
                 COL_FIRST_SEEN: TODAY,
@@ -582,7 +654,8 @@ def scrape_site_price_histories_selenium(links):
 
     total = len(links)
     result = {
-        url: {"price_history": "", "images": "", "site_date": "", "site_date_kind": ""}
+        url: {"price_history": "", "images": "", "site_date": "",
+              "site_date_kind": "", "construction": ""}
         for url in links
     }
 
@@ -683,6 +756,14 @@ def scrape_site_price_histories_selenium(links):
                 else:
                     logger.debug(f"  ⚠ Няма дата на обявата в страницата за {url}")
 
+                # ── Вид строителство ──
+                construction = parse_construction_from_html(page_html)
+                if construction:
+                    result[url]["construction"] = construction
+                    logger.info(f"  🧱 Строителство: {construction}")
+                else:
+                    logger.debug(f"  ⚠ Няма вид строителство в страницата за {url}")
+
                 price_hist = parse_site_price_history_html(page_html)
 
                 if price_hist:
@@ -720,16 +801,25 @@ def scrape_site_price_histories_selenium(links):
                 })
                 p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-                # Fallback за датата, ако Selenium е пропаднал
-                if not result[url]["site_date"]:
-                    site_date, site_date_kind = parse_ad_date_from_html(p_page.content())
-                    if site_date:
-                        result[url]["site_date"] = site_date
-                        result[url]["site_date_kind"] = site_date_kind
-                        logger.info(
-                            f"  📅 {site_date_kind}: {site_date} "
-                            f"({fmt_age(days_since(site_date))}) [Playwright]"
-                        )
+                # Fallback за датата и строителството, ако Selenium е пропаднал
+                if not result[url]["site_date"] or not result[url]["construction"]:
+                    pw_html = p_page.content()
+
+                    if not result[url]["site_date"]:
+                        site_date, site_date_kind = parse_ad_date_from_html(pw_html)
+                        if site_date:
+                            result[url]["site_date"] = site_date
+                            result[url]["site_date_kind"] = site_date_kind
+                            logger.info(
+                                f"  📅 {site_date_kind}: {site_date} "
+                                f"({fmt_age(days_since(site_date))}) [Playwright]"
+                            )
+
+                    if not result[url]["construction"]:
+                        construction = parse_construction_from_html(pw_html)
+                        if construction:
+                            result[url]["construction"] = construction
+                            logger.info(f"  🧱 Строителство: {construction} [Playwright]")
 
                 image_urls = extract_images(p_page, url, max_images=2)
                 if image_urls:
@@ -873,6 +963,13 @@ def _build_rows(df, cols):
             elif col_key == COL_IMAGES:
                 cells.append(f"<td>{_img_cell(val)}</td>")
 
+            elif col_key == COL_CONSTRUCTION:
+                text = str(val).strip() if pd.notna(val) else ""
+                if text and text.lower() not in ("nan", "none"):
+                    cells.append(f'<td><span class="constr">{text}</span></td>')
+                else:
+                    cells.append('<td>—</td>')
+
             elif col_key == COL_FIRST_SEEN:
                 cells.append(f"<td>{_added_cell(row)}</td>")
 
@@ -1003,20 +1100,21 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     recent_table = _table(
         df_recent,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_CONSTRUCTION, COL_FIRST_SEEN,
          COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Добавена", "Свалена ценова история", ""],
+         "Строителство", "Добавена", "Свалена ценова история", ""],
         css_id="recent-table",
     )
 
     changed_table = _table(
         df_changed_all,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN, COL_SCRAPED_DATE,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_CONSTRUCTION,
+         COL_FIRST_SEEN, COL_SCRAPED_DATE,
          COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Добавена", "Последно виждана", "История на цената",
+         "Строителство", "Добавена", "Последно виждана", "История на цената",
          "Свалена ценова история", ""],
         css_id="changed-table",
     )
@@ -1024,10 +1122,11 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     all_table = _table(
         df_active,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_FIRST_SEEN, COL_SCRAPED_DATE,
+         COL_FLOOR, COL_TOTAL_FLOORS, COL_YEAR, COL_CONSTRUCTION,
+         COL_FIRST_SEEN, COL_SCRAPED_DATE,
          COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
         ["Снимки", "Локация", "Цена", "Площ", "€/m²", "Ет.", "Общо ет.", "Год.",
-         "Добавена", "Последно виждана", "История на цената",
+         "Строителство", "Добавена", "Последно виждана", "История на цената",
          "Свалена ценова история", ""],
         css_id="all-table",
     )
@@ -1035,8 +1134,9 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
     sold_table = _table(
         df_sold,
         [COL_IMAGES, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-         COL_SCRAPED_DATE, COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LINK],
-        ["Снимки", "Локация", "Последна цена", "Площ", "€/m²",
+         COL_CONSTRUCTION, COL_SCRAPED_DATE, COL_PRICE_HISTORY,
+         COL_SITE_PRICE_HISTORY, COL_LINK],
+        ["Снимки", "Локация", "Последна цена", "Площ", "€/m²", "Строителство",
          "Последно виждана", "История на цената", "Свалена ценова история", ""],
         css_id="sold-table",
         extra_class="sold-table",
@@ -1348,6 +1448,16 @@ def generate_html(df_input: pd.DataFrame, now_str: str):
   }}
   .site-history {{
     color: #7dd3fc;
+  }}
+  /* вид строителство */
+  .constr {{
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 99px;
+    background: rgba(125, 211, 252, .12);
+    color: #7dd3fc;
+    font-size: 11px;
+    white-space: nowrap;
   }}
   /* възраст на обявата под датата "Добавена" */
   .age {{
@@ -1748,6 +1858,17 @@ df_new[COL_SITE_DATE_KIND] = df_new[COL_LINK].map(
 num_with_date = df_new[COL_SITE_DATE].str.strip().astype(bool).sum()
 logger.info(f"Извлечени дати на обявите: {num_with_date} от {len(df_new)} обяви")
 
+# ── Вид строителство: детайлната страница е меродавна, списъкът е резервен ────
+site_construction = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("construction", "")
+)
+df_new[COL_CONSTRUCTION] = site_construction.where(
+    site_construction.astype(str).str.strip() != "",
+    df_new[COL_CONSTRUCTION].fillna("") if COL_CONSTRUCTION in df_new.columns else "",
+).fillna("").astype(str)
+num_with_constr = df_new[COL_CONSTRUCTION].str.strip().astype(bool).sum()
+logger.info(f"Разпознат вид строителство: {num_with_constr} от {len(df_new)} обяви")
+
 # "Добавена" = датата от сайта; ако липсва → днешната дата (за съвсем нови обяви;
 # за вече познати обяви по-долу се пази старата стойност)
 df_new[COL_FIRST_SEEN] = df_new[COL_SITE_DATE].where(
@@ -1775,8 +1896,10 @@ if not df_history.empty:
         (COL_SITE_DATE, ""),
         (COL_SITE_DATE_KIND, ""),
         (COL_FIRST_SCRAPED, ""),
+        (COL_CONSTRUCTION, ""),
     ]:
         if col not in df_history.columns:
+            logger.info(f"Историята няма колона '{col}' → добавям я с празна стойност")
             df_history[col] = default
     df_history[COL_SOLD] = df_history[COL_SOLD].fillna(False)
 
@@ -1802,6 +1925,7 @@ if not df_all.empty:
         (COL_SITE_DATE, ""),
         (COL_SITE_DATE_KIND, ""),
         (COL_FIRST_SCRAPED, ""),
+        (COL_CONSTRUCTION, ""),
     ]:
         if col not in df_all.columns:
             df_all[col] = default
@@ -1846,6 +1970,7 @@ if not df_history.empty:
             f'{COL_PRICE_PER_SQM}_new',
             COL_LINK,
             COL_SITE_PRICE_HISTORY,
+            COL_CONSTRUCTION,
             f'{COL_PRICE_HISTORY}_updated',
         ]].rename(columns={
             f'{COL_LOCATION}_old': COL_LOCATION,
@@ -1888,6 +2013,13 @@ for _, row in df_new.iterrows():
             or str(df_all.at[link, COL_FIRST_SEEN] or "").strip()
             or old_first_scraped
         )
+
+        # ── Вид строителство: не трием вече познат вид с празна стойност ──
+        if not str(row_dict.get(COL_CONSTRUCTION) or "").strip() \
+                and COL_CONSTRUCTION in df_all.columns:
+            prev_constr = str(df_all.at[link, COL_CONSTRUCTION] or "").strip()
+            if prev_constr:
+                row_dict[COL_CONSTRUCTION] = prev_constr
 
         existing_images = df_all.at[link, COL_IMAGES] if COL_IMAGES in df_all.columns else ""
 
@@ -1952,6 +2084,16 @@ df_all[COL_AGE_DAYS] = pd.array(
     [days_since(v) for v in df_all[COL_FIRST_SEEN]], dtype="Int64"
 )
 
+# ── Нормализация преди запис ──────────────────────────────────────────────────
+# Нови колони върху стари редове идват като NaN (от concat/reindex). За parquet
+# това прави object колона със смесени типове, а в Excel се показва като "nan".
+# Затова текстовите колони се привеждат до чист низ.
+for _text_col in TEXT_COLS:
+    if _text_col in df_all.columns:
+        df_all[_text_col] = (
+            df_all[_text_col].fillna("").astype(str).replace({"nan": "", "None": ""})
+        )
+
 logger.info(
     f"New: {len(df_new_only)}  |  Changed: {len(df_changed)}  |  "
     f"Sold: {len(df_sold_now)}  |  Total unique: {len(df_all)}"
@@ -1984,6 +2126,7 @@ df_export = df_export.rename(columns={
     COL_SITE_DATE_KIND: 'Ad Date Type',
     COL_FIRST_SCRAPED: 'First Scraped Date',
     COL_AGE_DAYS: 'Age (days)',
+    COL_CONSTRUCTION: 'Construction Type',
     COL_LOCATION: 'Location',
     COL_TITLE: 'Title',
     COL_FLOOR: 'Floor',
@@ -2109,8 +2252,10 @@ a{color:#4f9cf9;text-decoration:none}
     if not df_new_only.empty:
         tbl = to_html_table(df_new_only,
                             [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-                             COL_FIRST_SEEN, COL_SITE_PRICE_HISTORY, COL_LINK],
-                            ["Локация", "Цена", "Площ", "€/m²", "Добавена", "История (сайт)", ""])
+                             COL_CONSTRUCTION, COL_FIRST_SEEN,
+                             COL_SITE_PRICE_HISTORY, COL_LINK],
+                            ["Локация", "Цена", "Площ", "€/m²", "Строителство",
+                             "Добавена", "История (сайт)", ""])
         new_section = f"""<h3><span class="pill new">НОВИ</span> &nbsp;{len(df_new_only)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_changed.empty:
@@ -2120,15 +2265,19 @@ a{color:#4f9cf9;text-decoration:none}
         if COL_PRICE in df_ch.columns and COL_SIZE in df_ch.columns and COL_PRICE_PER_SQM not in df_ch.columns:
             df_ch[COL_PRICE_PER_SQM] = (df_ch[COL_PRICE] / df_ch[COL_SIZE]).round(2)
         tbl = to_html_table(df_ch,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_PRICE_HISTORY,
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                             COL_CONSTRUCTION, COL_PRICE_HISTORY,
                              COL_SITE_PRICE_HISTORY, COL_LINK],
-                            ["Локация", "Нова цена", "Площ", "€/m²", "История на цената", "История (сайт)", ""])
+                            ["Локация", "Нова цена", "Площ", "€/m²", "Строителство",
+                             "История на цената", "История (сайт)", ""])
         changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_sold_now.empty:
         tbl = to_html_table(df_sold_now,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM, COL_SITE_PRICE_HISTORY, COL_LINK],
-                            ["Локация", "Последна цена", "Площ", "€/m²", "История (сайт)", ""],
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                             COL_CONSTRUCTION, COL_SITE_PRICE_HISTORY, COL_LINK],
+                            ["Локация", "Последна цена", "Площ", "€/m²",
+                             "Строителство", "История (сайт)", ""],
                             extra_class="sold-table")
         sold_section = f"""<h3><span class="pill sld">ПРОДАДЕНИ</span> &nbsp;{len(df_sold_now)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
