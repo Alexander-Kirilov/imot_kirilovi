@@ -1,0 +1,129 @@
+name: Imot.bg Scraper
+
+on:
+  schedule:
+    # 07:07 Българско време (лято UTC+3)
+    - cron: '7 3 * * *'
+
+    # 13:17 Българско време (лято UTC+3)
+    - cron: '17 10 * * *'
+    - cron: '45 5 * * *'
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: imot-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    permissions:
+      contents: write
+
+    env:
+      TZ: Europe/Sofia
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyarrow>=15.0.0"
+
+      # === Playwright Cache ===
+      - name: Cache Playwright
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      # === System Dependencies ===
+      - name: Install Playwright System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libgbm1 \
+            libxkbcommon0 \
+            libasound2t64 \
+            libatspi2.0-0 \
+            libgtk-3-0t64 \
+            libxshmfence1 \
+            fonts-liberation
+
+      # === Install Chromium only if missing ===
+      - name: Install Playwright Browsers
+        run: python -m playwright install chromium --with-deps
+#      # === Run the patch -once ===
+#      - name: Run bulk import patch (еднократно)
+#        run: |
+#          python patch_bulk_import.py
+ 
+#      # === Run Scraper ===
+      - name: Run scraper
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          RECEIVERS: ${{ secrets.RECEIVERS }}
+          # Парола за сайта и ключ за криптираните данни (репото е публично)
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          DASHBOARD_PASSWORD_OLD: ${{ secrets.DASHBOARD_PASSWORD_OLD }}
+          ERA_URL: ${{ secrets.ERA_URL }}
+          HOME2U_URL: ${{ secrets.HOME2U_URL }}
+          YAVLENA_URL: ${{ secrets.YAVLENA_URL }}
+        run: |
+          python imot_scraper.py
+
+      # === Debug ===
+      - name: Debug - check files
+        run: |
+          echo "=== Current directory ==="
+          ls -la
+
+          echo "=== docs folder ==="
+          ls -la docs/ || echo "ERROR: docs folder missing"
+
+          echo "=== git status ==="
+          git status
+
+      # === Commit & Push ===
+      - name: Commit & Push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # -A: и изтритите некриптирани файлове; .gitignore пази *.parquet, *.csv, *.log, *.xlsx
+          git add -A
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Автоматично обновяване: $(date +'%d.%m.%Y %H:%M %Z')"
+            git push
+          fi

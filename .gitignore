@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# Project specific
+*.log
+*.xlsx
+*.csv
+# Репото е публично: данните се качват само криптирани (*.enc, виж secure_store.py)
+*.parquet

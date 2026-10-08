@@ -1,0 +1,2738 @@
+import pandas as pd
+import re
+import hashlib
+import logging
+import time
+import random
+import smtplib
+import requests
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from openpyxl import load_workbook
+from openpyxl.styles import Font
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import os
+import atexit
+from pathlib import Path
+
+import agencies  # ERA, Home2U, Явлена — отделни табове в dashboard-а
+import secure_store  # репото е публично → данните, логът и dashboard-ът са криптирани
+
+LOG_FILE = 'imot_scraper.log'
+
+# Без парола не продължаваме — иначе данните ще се запишат некриптирани
+secure_store.require_password()
+# Логът се пази в репото само криптиран: разкриптираме го в началото,
+# а при излизане (вкл. exit()) записваме обратно криптирано копие
+secure_store.restore_file(LOG_FILE)
+atexit.register(secure_store.seal_file, LOG_FILE)
+
+
+# ================= LOGGING SETUP =================
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s')
+file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+console_handler = logging.StreamHandler()
+# Логовете на GitHub Actions в публично репо се виждат от всеки → там конзолата
+# мълчи; пълният лог е в imot_scraper.log.enc (python secure_store.py imot_scraper.log.enc)
+console_handler.setLevel(logging.CRITICAL + 1 if os.environ.get("GITHUB_ACTIONS") == "true"
+                         else logging.INFO)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+# agencies.py пише в същия лог
+agencies.logger.setLevel(logging.INFO)
+agencies.logger.addHandler(file_handler)
+agencies.logger.addHandler(console_handler)
+
+
+def cleanup_log(log_path: str, keep_days: int = 20) -> None:
+    """Трие редове от лог файла по-стари от `keep_days` дни."""
+    p = Path(log_path)
+    if not p.exists():
+        return
+    cutoff = (datetime.now() - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+    try:
+        lines = p.read_text(encoding='utf-8', errors='replace').splitlines(keepends=True)
+        kept = []
+        for line in lines:
+            # Форматът е "YYYY-MM-DD HH:MM:SS,mmm | ..." — ако редът започва с дата
+            m = re.match(r'(\d{4}-\d{2}-\d{2})', line)
+            if m:
+                if m.group(1) >= cutoff:
+                    kept.append(line)
+                # иначе → ред е по-стар, изхвърляме
+            else:
+                # ред без дата (continuation/traceback) → включваме само ако нещо вече е в kept
+                if kept:
+                    kept.append(line)
+        p.write_text("".join(kept), encoding='utf-8')
+        removed = len(lines) - len(kept)
+        if removed:
+            logger.info(f"Log cleanup: removed {removed} old lines (kept {keep_days} days)")
+    except Exception as _log_err:
+        logger.warning(f"Log cleanup failed: {_log_err}")
+
+
+cleanup_log(LOG_FILE, keep_days=20)
+
+logger.info("=== Starting imot.bg scraper ===")
+
+# ================= PATHS & CONFIG =================
+HISTORY_FILE = "all_listings_history.parquet"
+HTML_OUTPUT = Path("docs/index.html")  # GitHub Pages serves from /docs
+IMAGES_DIR = Path("docs/images")  # Downloaded listing images
+HTML_OUTPUT.parent.mkdir(exist_ok=True)
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+TODAY = datetime.now().strftime("%Y-%m-%d")
+NOW_STR = datetime.now().strftime("%d.%m.%Y %H:%M")
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+excel_file = f"imot_bg_scraping_{timestamp}.xlsx"
+
+# ── Email ─────────────────────────────────────────────────────────────────────
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
+SENDER_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+if not SENDER_PASSWORD:
+    logger.error("GMAIL_APP_PASSWORD secret is not set!")
+
+# Списък с получатели от променлива на средата (разделени със запетая)
+RECEIVERS_RAW = os.environ.get("RECEIVERS")
+RECEIVERS = [r.strip() for r in RECEIVERS_RAW.split(",") if r.strip()]
+
+# ── Search URL ────────────────────────────────────────────────────────────────
+base_url = os.environ.get(
+    "BASE_URL",
+)
+
+listings = []
+
+# ── Column constants ──────────────────────────────────────────────────────────
+COL_LINK = 'Link'
+COL_PRICE = 'Price_EUR'
+COL_SIZE = 'Size_sqm'
+COL_PRICE_PER_SQM = 'Price_EUR_per_sqm'
+COL_LOCATION = 'Location'
+COL_FLOOR = 'Floor'
+COL_TOTAL_FLOORS = 'Total_floors'
+COL_YEAR = 'Year_built'
+COL_INFO = 'Info'
+COL_TITLE = 'Title'
+COL_SCRAPED_DATE = 'Scraped_Date'
+COL_FIRST_SEEN = 'First_Seen_Date'
+COL_PRICE_HISTORY = 'Price_History'
+COL_SOLD = 'Sold'
+COL_SITE_PRICE_HISTORY = 'Свалена_ценова_история'
+COL_IMAGES = 'Image_Paths'  # comma-separated relative paths
+COL_LAST_PRICE_CHANGE_DATE = 'Last_Price_Change_Date'
+COL_BULK_IMPORT = 'Bulk_Import'  # True ако имотът е добавен при bulk run (>5 нови наведнъж)
+COL_SITE_DATE = 'Site_Ad_Date'  # Датата от самата обява (div.adPrice > div.info)
+COL_SITE_DATE_KIND = 'Site_Ad_Date_Kind'  # "Коригирана" / "Публикувана" / …
+COL_FIRST_SCRAPED = 'First_Scraped_Date'  # Кога скраперът е видял обявата за пръв път
+COL_AGE_DAYS = 'Age_Days'  # На колко дни е обявата спрямо COL_FIRST_SEEN
+COL_CONSTRUCTION = 'Construction_Type'  # Вид строителство: Тухла / Панел / ЕПК / …
+COL_SOURCE = agencies.COL_SOURCE  # Сайт: imot.bg / ERA / Home2U / Явлена
+COL_SOURCE_KEY = agencies.COL_SOURCE_KEY  # Ключ на сайта за филтъра: imot / era / …
+
+IMOT_SOURCE, IMOT_KEY = "imot.bg", "imot"
+# Само за показване: една "История на цената" от двете истории (виж merged_history)
+COL_HISTORY_VIEW = 'History_View'
+# Само за показване: "Етаж" като "4 / 11" (етаж / общо етажи)
+COL_FLOOR_VIEW = 'Floor_View'
+
+# Текстови колони, които се пазят като низ (без NaN) при запис в parquet/Excel
+TEXT_COLS = (
+    COL_SITE_DATE, COL_SITE_DATE_KIND, COL_FIRST_SCRAPED,
+    COL_FIRST_SEEN, COL_CONSTRUCTION,
+)
+
+# Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
+BULK_IMPORT_THRESHOLD = 5
+
+# Колко дни назад обхваща табът "Нови" в dashboard-а
+RECENT_DAYS = 10
+
+
+# ================= HELPERS =================
+
+def clean_price(raw):
+    if not raw:
+        return None
+    m = re.search(r'([\d\s.,]+)\s*€', raw)
+    if not m:
+        return None
+    cleaned = m.group(1).replace(' ', '').replace(',', '.')
+    try:
+        return float(cleaned)
+    except ValueError:
+        logger.warning(f"Failed to parse price: {raw}")
+        return None
+
+
+def normalize_location(loc):
+    if not loc:
+        return loc
+    rules = {
+        r'Младост\s*IV-ти': 'Младост 4',
+        r'Младост\s*IV': 'Младост 4',
+        r'Младост\s*V': 'Младост 5',
+        r'Младост\s*III': 'Младост 3',
+        r'Младост\s*II': 'Младост 2',
+        r'Младост\s*I\b': 'Младост 1',
+    }
+    orig = loc
+    for pat, repl in rules.items():
+        loc = re.sub(pat, repl, loc, flags=re.IGNORECASE)
+    if orig != loc:
+        logger.debug(f"Normalized location: {orig} → {loc}")
+    return loc
+
+
+BG_MONTHS = {
+    'януари': 1, 'февруари': 2, 'март': 3, 'април': 4, 'май': 5, 'юни': 6,
+    'юли': 7, 'август': 8, 'септември': 9, 'октомври': 10, 'ноември': 11, 'декември': 12,
+}
+
+# "Коригирана в 16:01 на 17 септември, 2026 год." / "Публикувана на 3 март, 2026 год."
+AD_DATE_RE = re.compile(
+    r'(Коригирана|Публикувана|Обновена|Актуализирана|Добавена)\s*'
+    r'(?:в\s*\d{1,2}:\d{2}\s*)?на\s*(\d{1,2})\s+([А-Яа-я]+)\s*,?\s*(\d{4})',
+    re.IGNORECASE,
+)
+
+# Където imot.bg държи реда с датата на обявата
+AD_DATE_SELECTORS = ('div.adPrice div.info', 'div.adPrice', 'div.adv', 'div.advHeader')
+
+
+def parse_ad_date_from_html(raw_html):
+    """Вади датата на обявата от самата страница в imot.bg.
+
+    Връща ('YYYY-MM-DD', вид) напр. ('2026-09-17', 'Коригирана'), или ('', '').
+    """
+    if not raw_html:
+        return "", ""
+
+    text = ""
+    try:
+        soup = BeautifulSoup(raw_html, 'html.parser')
+        for sel in AD_DATE_SELECTORS:
+            el = soup.select_one(sel)
+            if el:
+                candidate = el.get_text(" ", strip=True)
+                if AD_DATE_RE.search(candidate):
+                    text = candidate
+                    break
+        if not text:
+            # Последен опит — целият текст на страницата
+            text = soup.get_text(" ", strip=True)
+    except Exception as soup_err:
+        logger.debug(f"parse_ad_date: BeautifulSoup гръмна ({soup_err}) → суров HTML")
+        text = str(raw_html)
+
+    m = AD_DATE_RE.search(text.replace("\xa0", " "))
+    if not m:
+        return "", ""
+
+    month = BG_MONTHS.get(m.group(3).lower())
+    if not month:
+        logger.debug(f"parse_ad_date: непознат месец '{m.group(3)}'")
+        return "", ""
+    try:
+        parsed = datetime(int(m.group(4)), month, int(m.group(2)))
+    except ValueError:
+        logger.warning(f"parse_ad_date: невалидна дата в '{m.group(0)}'")
+        return "", ""
+
+    return parsed.strftime("%Y-%m-%d"), m.group(1).capitalize()
+
+
+# Вид строителство, както го изписва imot.bg (за разпознаване в свободен текст)
+CONSTRUCTION_TYPES = (
+    'Метална конструкция', 'Монолитна', 'Монолит', 'Сглобяема',
+    'Гредоред', 'Тухла', 'Панел', 'ЕПК', 'ПК',
+)
+
+
+def _clean_construction(raw):
+    """'Тухла, ' → 'Тухла'. Връща '' ако вместо вид е попаднала годината."""
+    txt = str(raw or "").replace("\xa0", " ").strip().strip(",").strip()
+    if not txt:
+        return ""
+    # Когато обявата няма вид строителство, първият <strong> е годината
+    if re.search(r'\d{4}', txt) or 'експлоатация' in txt.lower():
+        return ""
+    return txt
+
+
+def _construction_from_text(text):
+    """Търси вид строителство по речник — за текста от списъчната страница."""
+    s = str(text or "")
+    for name in CONSTRUCTION_TYPES:
+        if re.search(rf'(?<![А-Яа-яA-Za-z]){re.escape(name)}(?![А-Яа-яA-Za-z])',
+                     s, re.IGNORECASE):
+            return name
+    return ""
+
+
+def parse_construction_from_html(raw_html):
+    """Вид строителство от страницата на обявата.
+
+    Структурата в imot.bg е:
+        <div class="adParams">
+          …
+          <div>Строителство:<br><strong>Тухла, </strong>
+               Въведен в експлоатация <strong>2023 г.</strong></div>
+        </div>
+    Връща напр. 'Тухла', или '' ако обявата не посочва вид.
+    """
+    if not raw_html:
+        return ""
+    try:
+        soup = BeautifulSoup(raw_html, 'html.parser')
+    except Exception as soup_err:
+        logger.debug(f"parse_construction: BeautifulSoup гръмна ({soup_err})")
+        return ""
+
+    params = soup.select_one('div.adParams')
+    if not params:
+        return ""
+
+    for block in params.find_all('div'):
+        block_text = block.get_text(" ", strip=True)
+        if not block_text.startswith('Строителство'):
+            continue
+        strong = block.find('strong')
+        value = _clean_construction(strong.get_text(" ", strip=True) if strong else "")
+        # Ако първият <strong> е годината → пробваме по речник в целия блок
+        return value or _construction_from_text(block_text)
+
+    return ""
+
+
+def days_since(date_str):
+    """Колко дни са минали от 'YYYY-MM-DD'. None ако липсва/е невалидна дата."""
+    s = str(date_str or "").strip()[:10]
+    if not s:
+        return None
+    try:
+        d = datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    delta = (datetime.now().date() - d).days
+    return delta if delta >= 0 else 0
+
+
+def fmt_age(days):
+    """'днес' / '1 ден' / '17 дни' / '—'."""
+    if days is None:
+        return "—"
+    if days == 0:
+        return "днес"
+    if days == 1:
+        return "1 ден"
+    return f"{days} дни"
+
+
+def parse_total_ads(page_content):
+    soup = BeautifulSoup(page_content, 'html.parser')
+    text = soup.get_text(separator=' ', strip=True)
+    m = re.search(r'(?:от\s*общо\s*|от\s*)(\d+)\s*обяв[иа]', text, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    m2 = re.search(r'(\d+)\s*[-–]\s*\d+\s*от\s*общо\s*(\d+)', text)
+    if m2:
+        return int(m2.group(2))
+    return None
+
+
+def parse_page(page_content, pg_num=None):
+    soup = BeautifulSoup(page_content, 'html.parser')
+    items = soup.find_all('div', class_='item')
+    if not items:
+        logger.warning(f"No items found on page {pg_num or 1}")
+        return 0
+
+    page_count = 0
+    for item in items:
+        try:
+            title_a = item.find('a', class_='title')
+            if not title_a:
+                continue
+
+            title = title_a.get_text(separator=' ', strip=True)
+            href = title_a['href'].strip()
+            if 'fakti.bg' in href.lower() or not href.startswith(('https://www.imot.bg', '//', '/')):
+                continue
+            if href.startswith('//'):
+                href = 'https:' + href
+            elif href.startswith('/'):
+                href = 'https://www.imot.bg' + href
+            elif not href.startswith('http'):
+                href = 'https://www.imot.bg/' + href
+
+            price_div = item.find('div', class_='price')
+            price_raw = price_div.get_text(strip=True) if price_div else ''
+            price_eur = clean_price(price_raw)
+
+            info_div = item.find('div', class_='info')
+            info_text = info_div.get_text(strip=True) if info_div else ''
+
+            size = None
+            m = re.search(r'(\d{2,3})\s*кв\.?\s*м', info_text)
+            if m:
+                size = int(m.group(1))
+
+            floor = total_floors = None
+            m_floor = re.search(r'(\d+)\s*[-–]\s*(?:ти|ри)?', info_text)
+            if m_floor:
+                floor = int(m_floor.group(1))
+            m_total = re.search(r'(?:от\s*|/\s*)(\d+)', info_text)
+            if m_total:
+                total_floors = int(m_total.group(1))
+
+            year = None
+            m_year = re.search(r'(19\d{2}|20\d{2})(?:\s*[-–]\s*(19\d{2}|20\d{2}))?', info_text)
+            if m_year:
+                year = m_year.group(0).strip()
+
+            location = None
+            if 'град София,' in title:
+                location = title.split('град София,')[-1].strip()
+                location = normalize_location(location)
+
+            price_m2 = round(price_eur / size, 2) if price_eur and size and size > 0 else None
+
+            listings.append({
+                COL_TITLE: title,
+                COL_LOCATION: location,
+                COL_PRICE: price_eur,
+                COL_SIZE: size,
+                COL_PRICE_PER_SQM: price_m2,
+                COL_FLOOR: floor,
+                COL_TOTAL_FLOORS: total_floors,
+                COL_YEAR: year,
+                COL_INFO: info_text,
+                # Първо предположение от списъка; детайлната страница го уточнява
+                COL_CONSTRUCTION: _construction_from_text(info_text),
+                COL_LINK: href,
+                COL_SCRAPED_DATE: TODAY,
+                COL_FIRST_SEEN: TODAY,
+                COL_PRICE_HISTORY: "",
+                COL_SITE_PRICE_HISTORY: "",
+                COL_IMAGES: "",
+            })
+            page_count += 1
+        except Exception as parse_err:
+            logger.warning(f"Error parsing item on page {pg_num or 1}: {parse_err}")
+
+    logger.info(f"Scraped {page_count} listings from page {pg_num or 1}")
+    return page_count
+
+
+def format_price_history_entry(price, date_str):
+    if pd.isna(price) or price is None or pd.isna(date_str):
+        return ""
+    try:
+        price_int = int(round(float(price)))
+        return f"{price_int:,} € ({date_str})"
+    except (ValueError, TypeError):
+        return ""
+
+
+def append_current_if_needed(hist, price, date):
+    if pd.isna(price) or pd.isna(date):
+        return hist if isinstance(hist, str) else ""
+    curr = format_price_history_entry(price, date)
+    if not isinstance(hist, str):
+        hist = ""
+    if curr and curr not in hist:
+        return f"{hist} → {curr}" if hist.strip() else curr
+    return hist
+
+
+def deduplicate_history(df, link_col, price_history_col):
+    def merge_history(series):
+        vals = [v.strip() for v in series if isinstance(v, str) and v.strip()]
+        seen = set()
+        result = []
+        for v in vals:
+            if v not in seen:
+                seen.add(v)
+                result.append(v)
+        return " → ".join(result) if result else ""
+
+    df[price_history_col] = df[price_history_col].fillna("").astype(str)
+    agg = {}
+    for col_key in df.columns:
+        agg[col_key] = merge_history if col_key == price_history_col else 'last'
+    return df.groupby(link_col, as_index=False).agg(agg)
+
+
+def extract_last_price_change_date(price_history: str, site_price_history: str) -> str:
+    """Връща най-скорошната дата от двата вида история, или '' ако няма."""
+    dates = []
+    for m in re.finditer(r'\((\d{4}-\d{2}-\d{2})\)', str(price_history or "")):
+        dates.append(m.group(1))
+    for m in re.finditer(r'(\d{2})\.(\d{2})\.(\d{4})', str(site_price_history or "")):
+        dates.append(f"{m.group(3)}-{m.group(2)}-{m.group(1)}")
+    for m in re.finditer(r'(\d{4}-\d{2}-\d{2})', str(site_price_history or "")):
+        dates.append(m.group(1))
+    return max(dates) if dates else ""
+
+
+def has_price_change_in_period(price_history: str, site_price_history: str, days: int = 30) -> bool:
+    """Вярно ако има промяна в някоя от двете истории И е в рамките на `days` дни."""
+								  
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    has_scraper_change = " → " in str(price_history or "")
+    has_site_change = " → " in str(site_price_history or "")
+    if not (has_scraper_change or has_site_change):
+        return False
+    last_date = extract_last_price_change_date(price_history, site_price_history)
+    return last_date >= cutoff if last_date else False
+
+
+def merged_history(row):
+    """Една "История на цената" за показване → (текст, от_imot_bg, дата_на_последна_промяна).
+
+    imot.bg дава собствена история (по-пълна — и отпреди скрапера), затова е с предимство;
+    иначе — засечената от скрапера, но само ако има реална промяна (а не една цена).
+    Данните остават в двете колони — табът "Промени" и имейлът ползват и двете.
+    """
+    site_hist = str(row.get(COL_SITE_PRICE_HISTORY, "") or "").strip()
+    scraper_hist = str(row.get(COL_PRICE_HISTORY, "") or "").strip()
+    if site_hist.lower() in ("nan", "none", "—"):
+        site_hist = ""
+    if site_hist:
+        return site_hist, True, extract_last_price_change_date(scraper_hist, site_hist)
+    if " → " in scraper_hist:
+        return scraper_hist, False, extract_last_price_change_date(scraper_hist, "")
+    return "", False, ""
+
+
+def parse_site_price_history_html(raw_html):
+    if not raw_html or len(raw_html) < 100:
+        return ""
+
+    soup = BeautifulSoup(raw_html, 'html.parser')
+
+    # Търсим контейнера по различни начини
+    container = soup.find('div', id='priceHistory2')
+    if not container:
+        return ""
+
+    statistiki = container.find('statistiki')
+    if not statistiki:
+        statistiki = soup.find('statistiki')
+    if not statistiki:
+        return ""
+
+    divs = statistiki.find_all('div', recursive=False)
+    if len(divs) < 10:
+        logger.debug(f"Недостатъчно div-ове в price history: {len(divs)}")
+        return ""
+
+    def clean(el):
+        if not el:
+            return ""
+        return el.get_text(separator=" ", strip=True).replace("\xa0", " ").strip()
+
+    parts = []
+    # Пропускаме header-а (обикновено първите 4 div-а)
+    data_divs = divs[4:]
+
+    for i in range(0, len(data_divs), 4):
+        if i + 2 >= len(data_divs):
+            break
+        date_txt = clean(data_divs[i])
+        change_txt = clean(data_divs[i + 1])
+        price_txt = clean(data_divs[i + 2])
+
+        if not price_txt or "€" not in price_txt:
+            continue
+
+        if any(x in date_txt.lower() for x in ["начало", "начална"]):
+            parts.append(f"Начална: {price_txt}")
+        else:
+            span_class = ""
+            if "-" in change_txt:
+                span_class = ' class="price-down"'
+            elif "+" in change_txt:
+                span_class = ' class="price-up"'
+
+            change_part = f' <span{span_class}>{change_txt}</span>' if change_txt and change_txt not in ["",
+                                                                                                         "—"] else ""
+            parts.append(f"{date_txt}{change_part} → {price_txt}")
+
+    result = " | ".join(parts)
+    if result:
+        logger.info(f"Успешно извлечена история: {result[:120]}...")
+    else:
+        logger.warning("Не успях да извлека ценова история от страницата")
+
+    return result
+
+
+# ================= IMAGE DOWNLOAD =================
+
+def get_listing_id_from_url(url):
+    """Извлича ID-то на обявата от URL-а (напр. 1c176432069391545)"""
+    match = re.search(r'obiava-([a-z0-9]+)-', url)
+    return match.group(1) if match else None
+
+
+def extract_images(page, listing_url, max_images=2):
+    urls = []
+    listing_id = get_listing_id_from_url(listing_url)
+
+    if not listing_id:
+        logger.warning("Could not extract listing ID from URL")
+        return []
+
+    try:
+        page.wait_for_timeout(1500)
+
+        for _ in range(5):
+            page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(500)
+
+        images = page.query_selector_all("img.carouselimg")
+
+        candidates_with_id = []
+        candidates_fallback = []
+        for img in images:
+            try:
+                data_src_gallery = img.get_attribute("data-src-gallery")
+                data_src = img.get_attribute("data-src")
+                src = img.get_attribute("src")
+                alt = img.get_attribute("alt") or ""
+
+                candidate = data_src_gallery or data_src or src
+
+                if candidate and ("imotstatic" in candidate or "cdn" in candidate or "focus.bg" in candidate):
+                    m = re.search(r'изображение\s+(\d+)', alt, re.IGNORECASE)
+                    order = int(m.group(1)) if m else 9999
+
+                    if listing_id in candidate:
+                        candidates_with_id.append((order, candidate))
+                    else:
+                        candidates_fallback.append((order, candidate))
+            except:
+                continue
+
+        # Ако точните съвпадения има – ползваме тях, иначе – fallback без ID
+        candidates = candidates_with_id if candidates_with_id else candidates_fallback
+        if candidates_fallback and not candidates_with_id:
+            logger.info(f"  ℹ listing_id not in CDN URLs, using fallback images for {listing_id}")
+
+        # Сортираме по номер → изображение 1 първо, изображение 2 второ и т.н.
+        candidates.sort(key=lambda x: x[0])
+        urls = [url for _, url in candidates]
+
+        # Премахваме дубликати и лимитираме
+        unique_urls = list(dict.fromkeys(urls))
+        logger.debug(
+            f"Found {len(unique_urls)} images for listing {listing_id}, "
+            f"order: {[o for o, _ in candidates[:max_images]]}"
+        )
+
+        return unique_urls[:max_images]
+
+    except Exception as extract_img_error:
+        logger.warning(f"extract_images error: {extract_img_error}")
+        return urls
+
+
+def download_images_from_urls(listing_url, image_urls, max_images=2):
+    if not image_urls:
+        logger.warning(f"No valid images found for {listing_url}")
+        return ""
+
+    lid = get_listing_id_from_url(listing_url)
+    img_dir = IMAGES_DIR / lid
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_hashes = set()
+    for existing in img_dir.glob("*.jpg"):
+        try:
+            existing_hashes.add(hashlib.md5(existing.read_bytes()).hexdigest())
+        except Exception:
+            pass
+
+    saved = []
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    new_count = 0
+    for i, src in enumerate(image_urls[:max_images], start=1):
+        try:
+            path = img_dir / f"{i}.jpg"
+            if path.exists():
+                saved.append(f"images/{lid}/{i}.jpg")
+                logger.debug(f"✓ Already exists, skipping image {i} for {lid}")
+                continue
+
+            r = requests.get(src, timeout=20, headers=headers)
+            if r.status_code == 200 and len(r.content) > 10000:
+                img_hash = hashlib.md5(r.content).hexdigest()
+                if img_hash in existing_hashes:
+                    logger.debug(f"⟳ Duplicate image (hash match), skipping {i} for {lid}")
+                    continue
+                path.write_bytes(r.content)
+                existing_hashes.add(img_hash)
+                saved.append(f"images/{lid}/{i}.jpg")
+                new_count += 1
+                logger.debug(f"✓ Downloaded image {i} for {lid}")
+        except Exception as ex:
+            logger.debug(f"Download failed: {ex}")
+
+    return ",".join(saved) if saved else "", new_count
+
+
+# ================= SELENIUM + PLAYWRIGHT: PRICE HISTORY + IMAGES =================
+
+def scrape_site_price_histories_selenium(links):
+    if not links:
+        return {}
+
+    total = len(links)
+    result = {
+        url: {"price_history": "", "images": "", "site_date": "",
+              "site_date_kind": "", "construction": ""}
+        for url in links
+    }
+
+    logger.info(f"Processing {total} listings...")
+
+    # Selenium за price history
+    driver = None
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+        driver = webdriver.Chrome(options=options)
+        wait = WebDriverWait(driver, 10)
+    except Exception as selenium_err:
+        logger.error(f"Selenium failed: {selenium_err}")
+
+    # Playwright за снимки
+    pw_browser = None
+    try:
+        from playwright.sync_api import sync_playwright
+        pw = sync_playwright().start()
+        pw_browser = pw.chromium.launch(headless=True)
+    except Exception as pw_init_err:
+        logger.warning(f"Playwright init failed: {pw_init_err}")
+
+    good_listings = 0
+
+    for idx, url in enumerate(links, start=1):
+        logger.info(f"[{idx}/{total}] {url}")
+
+        # ================= PRICE HISTORY =================
+        price_hist = ""
+
+        if driver:
+            try:
+                driver.get(url)
+
+                price_history_elem = wait.until(
+                    EC.presence_of_element_located((By.ID, "priceHistory2"))
+                )
+
+                try:
+                    title_span = price_history_elem.find_element(
+                        By.CSS_SELECTOR,
+                        'div.title span[onclick*="showpricechange"]',
+                    )
+
+                    onclick_attr = title_span.get_attribute("onclick") or ""
+
+                    start = onclick_attr.find("(") + 1
+                    end = onclick_attr.rfind(");")
+
+                    params_str = onclick_attr[start:end]
+                    params = [p.strip().strip("'") for p in params_str.split(",")]
+
+                    if len(params) >= 5:
+                        js_code = (
+                            f"showpricechange('{params[0]}','{params[1]}',"
+                            f"'{params[2]}','{params[3]}','{params[4]}');"
+                        )
+
+                        driver.execute_script(js_code)
+
+                        try:
+                            wait.until(
+                                EC.presence_of_element_located(
+                                    (By.TAG_NAME, "statistiki")
+                                )
+                            )
+                        except Exception as price_hist_err:
+                            logger.warning(f"... {price_hist_err}")
+
+                        time.sleep(1)
+
+                except Exception as js_err:
+                    logger.debug(f"showpricechange failed: {js_err}")
+
+                page_html = driver.page_source
+
+                # ── Дата на обявата (Коригирана/Публикувана) ──
+                site_date, site_date_kind = parse_ad_date_from_html(page_html)
+                if site_date:
+                    result[url]["site_date"] = site_date
+                    result[url]["site_date_kind"] = site_date_kind
+                    logger.info(
+                        f"  📅 {site_date_kind}: {site_date} ({fmt_age(days_since(site_date))})"
+                    )
+                else:
+                    logger.debug(f"  ⚠ Няма дата на обявата в страницата за {url}")
+
+                # ── Вид строителство ──
+                construction = parse_construction_from_html(page_html)
+                if construction:
+                    result[url]["construction"] = construction
+                    logger.info(f"  🧱 Строителство: {construction}")
+                else:
+                    logger.debug(f"  ⚠ Няма вид строителство в страницата за {url}")
+
+                price_hist = parse_site_price_history_html(page_html)
+
+                if price_hist:
+                    logger.info(f"  ✔ История на цената: {price_hist[:150]}...")
+                    result[url]["price_history"] = price_hist
+                else:
+                    logger.warning(f"  ⚠ Няма извлечена история за {url}")
+                    result[url]["price_history"] = ""
+
+            except Exception as hist_err:
+                first_line = str(hist_err).splitlines()[0].strip() or "Chrome crash (empty message)"
+                logger.warning(f"  ⚠ Ценова история неуспешна: {first_line}")
+                logger.debug(f"  Full error for {url}:\n{hist_err}")  # пълният stacktrace само при DEBUG
+                if "Message:" in str(hist_err) and str(hist_err).strip().startswith("Message:"):
+                    logger.warning("  Chrome crash detected – restarting Selenium driver")
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    try:
+                        driver = webdriver.Chrome(options=options)
+                        wait = WebDriverWait(driver, 10)
+                        logger.info("  ✔ Selenium driver restarted")
+                    except Exception as restart_err:
+                        logger.error(f"  Could not restart driver: {restart_err}")
+                        driver = None
+
+        # ================= IMAGES (Playwright) =================
+        img_paths = ""
+        if pw_browser:
+            try:
+                p_page = pw_browser.new_page()
+                p_page.set_extra_http_headers({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                p_page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+                # Fallback за датата и строителството, ако Selenium е пропаднал
+                if not result[url]["site_date"] or not result[url]["construction"]:
+                    pw_html = p_page.content()
+
+                    if not result[url]["site_date"]:
+                        site_date, site_date_kind = parse_ad_date_from_html(pw_html)
+                        if site_date:
+                            result[url]["site_date"] = site_date
+                            result[url]["site_date_kind"] = site_date_kind
+                            logger.info(
+                                f"  📅 {site_date_kind}: {site_date} "
+                                f"({fmt_age(days_since(site_date))}) [Playwright]"
+                            )
+
+                    if not result[url]["construction"]:
+                        construction = parse_construction_from_html(pw_html)
+                        if construction:
+                            result[url]["construction"] = construction
+                            logger.info(f"  🧱 Строителство: {construction} [Playwright]")
+
+                image_urls = extract_images(p_page, url, max_images=2)
+                if image_urls:
+                    img_paths, new_count = download_images_from_urls(url, image_urls, max_images=2)
+                    if img_paths:
+                        total_imgs = len(img_paths.split(','))
+                        if new_count > 0:
+                            logger.info(f"  → {new_count} нови снимки свалени ({total_imgs} общо)")
+                        else:
+                            logger.debug(f"  → {total_imgs} снимки вече съществуват, пропускам")
+                    else:
+                        logger.warning(f"  → Не успях да сваля снимките")
+                else:
+                    logger.warning(f"  → Няма намерени снимки за обявата")
+
+                p_page.close()
+
+            except Exception as pw_err:
+                logger.warning(f"Playwright error for {url}: {pw_err}")
+
+        result[url]["images"] = img_paths
+
+        time.sleep(2 + random.uniform(0, 1))
+
+    # Cleanup
+    if driver:
+        driver.quit()
+    if pw_browser:
+        pw_browser.close()
+
+    logger.info(f"Finished. Good listings with images: {good_listings}/{total}")
+    return result
+
+
+# ================= HTML GENERATOR =================
+
+def _fmt_price(x):
+    return f"{int(round(x)):,} €".replace(",", "\u202f") if pd.notna(x) and x else "—"
+
+
+def _fmt_size(x):
+    return f"{int(x)} m²" if pd.notna(x) and x else "—"
+
+
+def _fmt_floor(x):
+    try:
+        return str(int(float(x))) if pd.notna(x) and x != "" else "—"
+    except (ValueError, TypeError):
+        return "—"
+
+
+def _fmt_pm2(x):
+    return f"{int(round(x))} €/m²" if pd.notna(x) and x else "—"
+
+
+def _link_cell(href):
+    if not href or pd.isna(href):
+        return "—"
+    return f'<a href="{href}" target="_blank" rel="noopener">🔗 Виж</a>'
+
+
+def _img_cell(paths_str):
+    """Показва до 2 thumbnail-а от запазените снимки."""
+    if not paths_str or pd.isna(paths_str) or str(paths_str).strip() == "":
+        return "—"
+    html_parts = []
+    for img_path in str(paths_str).split(",")[:2]:
+        img_path = img_path.strip()
+        if img_path:
+            # снимките на агенциите са директни линкове към техните сайтове
+            html_parts.append(
+                f'<img src="{img_path}" loading="lazy" referrerpolicy="no-referrer" '
+                f'style="width:72px;height:54px;object-fit:cover;'
+                f'border-radius:4px;margin-right:4px;cursor:pointer" '
+                f'onclick="window.open(this.src)" '
+                f'onerror="this.style.display=\'none\'">'
+            )
+    return "".join(html_parts) if html_parts else "—"
+
+
+def _attr(value):
+    """Екранира стойност за HTML атрибут (data-loc, data-constr…)."""
+    return (str(value or "")
+            .replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _age_of(row):
+    """Възраст в дни — от готовата колона, иначе пресметната от 'Добавена'."""
+    days = row.get(COL_AGE_DAYS)
+    try:
+        if pd.notna(days) and days != "":
+            return int(days)
+    except (TypeError, ValueError):
+        pass
+    return days_since(row.get(COL_FIRST_SEEN, ""))
+
+
+def _text(value):
+    """Стойност → чист низ ('' за NaN/None)."""
+    s = str(value if value is not None else "").strip()
+    return "" if s.lower() in ("nan", "none", "nat", "<na>") else s
+
+
+def _added_cell(row):
+    """Клетка 'Добавена': дата от сайта + на колко дни е обявата."""
+    date_txt = _text(row.get(COL_FIRST_SEEN, ""))
+    if not date_txt:
+        return "—"
+    source = _text(row.get(COL_SOURCE, "")) or IMOT_SOURCE
+    kind = _text(row.get(COL_SITE_DATE_KIND, ""))
+    site_date = _text(row.get(COL_SITE_DATE, ""))
+    if kind and site_date:
+        title = f' title="{kind} на {site_date} — по данни от {source}"'
+    else:
+        title = f' title="Дата на първо засичане от скрапера ({source} не даде дата)"'
+    return (f'<span{title}>{date_txt}'
+            f'<br><small class="age">{fmt_age(_age_of(row))}</small></span>')
+
+
+def _sort_num(value):
+    """Число за data-sort ('' ако няма) — за коректно сортиране по колоните."""
+    try:
+        f = float(value)
+        return "" if pd.isna(f) else f"{f:g}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _fmt_year(value):
+    """1984.0 → '1984'; '1984-1990' остава както е."""
+    s = _text(value)
+    return s[:-2] if s.endswith(".0") else (s or "—")
+
+
+def _build_rows(df, cols):
+    rows_html = []
+    for _, row in df.iterrows():
+        loc_val = _text(row.get(COL_LOCATION, ""))
+        price_val = row.get(COL_PRICE, "")
+        floor_val = row.get(COL_FLOOR, "")
+        try:
+            price_num = int(round(float(price_val))) if pd.notna(price_val) and price_val != "" else ""
+        except:
+            price_num = ""
+        try:
+            floor_num = int(float(floor_val)) if pd.notna(floor_val) and floor_val != "" else ""
+        except:
+            floor_num = ""
+        constr_val = _text(row.get(COL_CONSTRUCTION, ""))
+        src_key = _text(row.get(COL_SOURCE_KEY, "")) or IMOT_KEY
+        tr_attrs = (f'data-src="{_attr(src_key)}" '
+                    f'data-loc="{_attr(loc_val)}" data-price="{price_num}" '
+                    f'data-floor="{floor_num}" data-constr="{_attr(constr_val)}"')
+
+        cells = []
+        for col_key in cols:
+            val = row.get(col_key, "")
+
+            if col_key == COL_LINK:
+                cells.append(f'<td class="nowrap">{_link_cell(val)}</td>')
+
+            elif col_key == COL_SOURCE:
+                name = _text(val) or IMOT_SOURCE
+                cells.append(f'<td class="col-src"><span class="src src-{_attr(src_key)}">{name}</span></td>')
+
+            elif col_key == COL_PRICE:
+                cells.append(f'<td class="nowrap" data-sort="{_sort_num(val)}">{_fmt_price(val)}</td>')
+
+            elif col_key == COL_SIZE:
+                cells.append(f'<td class="nowrap" data-sort="{_sort_num(val)}">{_fmt_size(val)}</td>')
+
+            elif col_key == COL_PRICE_PER_SQM:
+                cells.append(f'<td class="nowrap" data-sort="{_sort_num(val)}">{_fmt_pm2(val)}</td>')
+
+            elif col_key in (COL_FLOOR, COL_TOTAL_FLOORS):
+                cells.append(f'<td data-sort="{_sort_num(val)}">{_fmt_floor(val)}</td>')
+
+            elif col_key == COL_YEAR:
+                m_year = re.search(r'\d{4}', _text(val))
+                cells.append(f'<td class="nowrap" data-sort="{m_year.group() if m_year else ""}">{_fmt_year(val)}</td>')
+
+            elif col_key == COL_SCRAPED_DATE:
+                d = _text(val)[:10]
+                cells.append(f'<td class="nowrap" data-sort="{d}">{d or "—"}</td>')
+
+            elif col_key == COL_IMAGES:
+                cells.append(f"<td>{_img_cell(val)}</td>")
+
+            elif col_key == COL_CONSTRUCTION:
+                text = str(val).strip() if pd.notna(val) else ""
+                if text and text.lower() not in ("nan", "none"):
+                    cells.append(f'<td><span class="constr">{text}</span></td>')
+                else:
+                    cells.append('<td>—</td>')
+
+            elif col_key == COL_FIRST_SEEN:
+                d = _text(row.get(COL_FIRST_SEEN, ""))[:10]
+                cells.append(f'<td class="nowrap" data-sort="{d}">{_added_cell(row)}</td>')
+
+            elif col_key == COL_AGE_DAYS:
+                cells.append(f'<td class="age">{fmt_age(_age_of(row))}</td>')
+
+            elif col_key == COL_FLOOR_VIEW:
+                floor_txt = _fmt_floor(row.get(COL_FLOOR, ""))
+                total_txt = _fmt_floor(row.get(COL_TOTAL_FLOORS, ""))
+                if floor_txt == "0":
+                    floor_txt = "партер"
+                text = f"{floor_txt} / {total_txt}" if total_txt != "—" else floor_txt
+                # сортира се по етажа; филтърът ползва data-floor на реда
+                cells.append(f'<td class="nowrap" data-sort="{_sort_num(row.get(COL_FLOOR, ""))}">{text}</td>')
+
+            elif col_key == COL_HISTORY_VIEW:
+                text, from_site, last_change = merged_history(row)
+                if text:
+                    cls = "history site-history" if from_site else "history"
+                    src = "по данни от imot.bg" if from_site else "засечена от скрапера"
+                    cells.append(f'<td data-sort="{last_change}"><div class="{cls}" '
+                                 f'title="История на цената — {src}">{text}</div></td>')
+                else:
+                    cells.append('<td data-sort="">—</td>')
+
+            elif col_key == COL_SITE_PRICE_HISTORY:
+                text = str(val).strip() if pd.notna(val) else ""
+                if text and text != "—":
+                    cells.append(f'<td><div class="history site-history">{text}</div></td>')
+                else:
+                    cells.append('<td>—</td>')
+
+            elif col_key == COL_PRICE_HISTORY:
+                text = str(val).strip() if pd.notna(val) else ""
+                if text and text != "—":
+                    cells.append(f'<td><span class="history">{text}</span></td>')
+                else:
+                    cells.append('<td>—</td>')
+
+            else:
+                cells.append(f"<td>{val if pd.notna(val) and val != '' else '—'}</td>")
+
+        rows_html.append(f"<tr {tr_attrs}>" + "".join(cells) + "</tr>")
+    return "\n".join(rows_html)
+
+
+def _table(df, cols, headers, css_id="", extra_class=""):
+    if df.empty:
+        return '<p class="empty-note">Няма данни.</p>'
+    thead = "<tr>" + "".join(
+        f'<th class="col-src">{h}</th>' if col == COL_SOURCE else f"<th>{h}</th>"
+        for col, h in zip(cols, headers)
+    ) + "</tr>"
+    tbody = _build_rows(df, cols)
+    id_attr = f' id="{css_id}"' if css_id else ""
+    cls = f'data-table {extra_class}'.strip()
+    return f'<table{id_attr} class="{cls}"><thead>{thead}</thead><tbody>{tbody}</tbody></table>'
+
+
+def _combine_sites(df_imot, agency_results):
+    """imot.bg + агенциите в една таблица; колоната 'Сайт' казва откъде е обявата."""
+    frames = []
+    if not df_imot.empty:
+        frames.append(df_imot.assign(**{COL_SOURCE: IMOT_SOURCE, COL_SOURCE_KEY: IMOT_KEY}))
+    frames += [res["df"] for res in agency_results or [] if not res["df"].empty]
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True, sort=False)
+    for flag in (COL_SOLD, COL_BULK_IMPORT):
+        df[flag] = df[flag].fillna(False).astype(bool) if flag in df.columns else False
+    # Колони, които някой сайт няма (напр. свалената от imot.bg ценова история)
+    for col in (COL_LOCATION, COL_CONSTRUCTION, COL_FIRST_SEEN, COL_SCRAPED_DATE, COL_SITE_DATE,
+                COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LAST_PRICE_CHANGE_DATE):
+        df[col] = df[col].fillna("").astype(str) if col in df.columns else ""
+    return df
+
+
+def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
+    # Всички сайтове в едни и същи таблици; табовете по сайт филтрират редовете
+    df_input = _combine_sites(df_input, agency_results)
+
+    # ── Derive sections ───────────────────────────────────────────────────────
+    df_active = df_input[~df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
+    df_new_all = df_active.copy()
+
+    if not df_active.empty and COL_PRICE_HISTORY in df_active.columns:
+									  
+        cutoff_30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+        def _in_last_30(row):
+            last_chg = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
+            price_hist = str(row.get(COL_PRICE_HISTORY, "") or "")
+            site_hist = str(row.get(COL_SITE_PRICE_HISTORY, "") or "")
+            # Реална промяна = наличие на " → " в някоя от историите
+            # (имот с единична начална цена няма → и не трябва да е в Промени)
+            has_actual_change = (" → " in price_hist) or (" → " in site_hist)
+            if not has_actual_change:
+                return False
+            if last_chg and last_chg >= cutoff_30:
+                return True
+            return has_price_change_in_period(price_hist, site_hist, days=30)
+
+        mask_changed = df_active.apply(_in_last_30, axis=1)
+        df_changed_all = df_active[mask_changed].copy()
+
+        def _last_chg_sort(row):
+            d = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
+            if d:
+                return d
+            return extract_last_price_change_date(
+                row.get(COL_PRICE_HISTORY, ""),
+                row.get(COL_SITE_PRICE_HISTORY, ""),
+            )
+        if not df_changed_all.empty:
+            df_changed_all["_sort_date"] = df_changed_all.apply(_last_chg_sort, axis=1)
+            df_changed_all = df_changed_all.sort_values("_sort_date", ascending=False).drop(columns=["_sort_date"])
+    else:
+        df_changed_all = pd.DataFrame()
+
+    df_sold = df_input[df_input[COL_SOLD].fillna(False)].copy() if not df_input.empty else pd.DataFrame()
+    if not df_sold.empty:
+        df_sold = df_sold.sort_values(COL_SCRAPED_DATE, ascending=False)
+
+    # ── Нови — добавени за първи път през последните RECENT_DAYS дни, БЕЗ bulk import ──
+    cutoff_date = (datetime.now() - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%d")
+    if not df_active.empty and COL_FIRST_SEEN in df_active.columns:
+        mask_recent = df_active[COL_FIRST_SEEN].fillna("") >= cutoff_date
+        # Изключваме имоти добавени при bulk run (скраперът ги е видял за пръв път
+        # в рун, където са добавени >5 наведнъж — т.е. не са реално нови обяви)
+        if COL_BULK_IMPORT in df_active.columns:
+            is_bulk = df_active[COL_BULK_IMPORT].fillna(False).astype(bool)
+        else:
+            is_bulk = pd.Series(False, index=df_active.index)
+        # …но когато имаме реална дата от imot.bg, тя е меродавна и bulk флагът не важи
+        if COL_SITE_DATE in df_active.columns:
+            has_site_date = (
+                df_active[COL_SITE_DATE].fillna("").astype(str).str.strip() != ""
+            )
+        else:
+            has_site_date = pd.Series(False, index=df_active.index)
+        mask_not_bulk = (~is_bulk) | has_site_date
+        df_recent = df_active[mask_recent & mask_not_bulk].copy()
+        df_recent = df_recent.sort_values(COL_FIRST_SEEN, ascending=False)
+    else:
+        df_recent = pd.DataFrame()
+
+    n_total = len(df_active)
+    n_recent = len(df_recent)
+    n_changed = len(df_changed_all)
+    n_sold = len(df_sold)
+
+    # ── Сортиране: Младост 2 първо; и двете групи — по "Добавена" (първо най-новите) ──
+    if not df_active.empty:
+        df_active = df_active.sort_values([COL_FIRST_SEEN, COL_SCRAPED_DATE], ascending=False)
+        is_m2 = df_active[COL_LOCATION].str.contains(r"Младост\s*2\b", case=False, regex=True)
+        df_active = pd.concat([df_active[is_m2], df_active[~is_m2]], ignore_index=True)
+    if not df_new_all.empty:
+        df_new_all = df_new_all.sort_values(
+            COL_FIRST_SEEN if COL_FIRST_SEEN in df_new_all.columns else COL_SCRAPED_DATE,
+            ascending=False)
+    # df_changed_all е вече сортиран по _sort_date по-горе — не презаписваме!
+																					  
+
+    # ── Build tables ─────────────────────────────────────────────────────
+    recent_table = _table(
+        df_recent,
+        [COL_IMAGES, COL_SOURCE, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR_VIEW, COL_YEAR, COL_CONSTRUCTION, COL_FIRST_SEEN,
+         COL_HISTORY_VIEW, COL_LINK],
+        ["Снимки", "Сайт", "Локация", "Цена", "Площ", "€/m²", "Етаж", "Год.",
+         "Строителство", "Добавена", "История на цената", ""],
+        css_id="recent-table",
+    )
+
+    changed_table = _table(
+        df_changed_all,
+        [COL_IMAGES, COL_SOURCE, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR_VIEW, COL_YEAR, COL_CONSTRUCTION, COL_FIRST_SEEN,
+         COL_HISTORY_VIEW, COL_LINK],
+        ["Снимки", "Сайт", "Локация", "Цена", "Площ", "€/m²", "Етаж", "Год.",
+         "Строителство", "Добавена", "История на цената", ""],
+        css_id="changed-table",
+    )
+
+    all_table = _table(
+        df_active,
+        [COL_IMAGES, COL_SOURCE, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_FLOOR_VIEW, COL_YEAR, COL_CONSTRUCTION, COL_FIRST_SEEN,
+         COL_HISTORY_VIEW, COL_LINK],
+        ["Снимки", "Сайт", "Локация", "Цена", "Площ", "€/m²", "Етаж", "Год.",
+         "Строителство", "Добавена", "История на цената", ""],
+        css_id="all-table",
+    )
+
+    sold_table = _table(
+        df_sold,
+        [COL_IMAGES, COL_SOURCE, COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+         COL_CONSTRUCTION, COL_SCRAPED_DATE, COL_HISTORY_VIEW, COL_LINK],
+        ["Снимки", "Сайт", "Локация", "Последна цена", "Площ", "€/m²", "Строителство",
+         "Последно виждана", "История на цената", ""],
+        css_id="sold-table",
+        extra_class="sold-table",
+    )
+
+    # ── Уникални локации за dropdown ─────────────────────────────────────────
+    import json as _json
+    all_locs = sorted(
+        {str(v).strip() for v in df_input[COL_LOCATION].dropna() if str(v).strip()},
+        key=lambda x: x.lower()
+    )
+    locations_json = _json.dumps(all_locs, ensure_ascii=False)
+
+    # ── Уникални видове строителство за dropdown ─────────────────────────────
+    if COL_CONSTRUCTION in df_input.columns:
+        constr_vals = {
+            str(v).strip() for v in df_input[COL_CONSTRUCTION].dropna()
+            if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+        }
+        # Има ли изобщо обяви без посочен вид → добавяме опция за тях
+        has_unknown = bool(
+            (df_input[COL_CONSTRUCTION].fillna("").astype(str).str.strip() == "").any()
+        )
+    else:
+        constr_vals, has_unknown = set(), False
+    all_constr = sorted(constr_vals, key=lambda x: x.lower())
+    constructions_json = _json.dumps(all_constr, ensure_ascii=False)
+    has_unknown_constr_json = _json.dumps(has_unknown)
+
+    # ── Табове по сайт (горният ред) + ред с информация за избрания сайт ──────
+    sites = [("all", "Всички"), (IMOT_KEY, IMOT_SOURCE)]
+    sites += [(res["key"], res["name"]) for res in agency_results or []]
+    active_by_site = df_active[COL_SOURCE_KEY].value_counts().to_dict() if not df_active.empty else {}
+    site_nav = '  <span class="site-nav-label">Сайт</span>\n' + "\n".join(
+        f'  <a data-site="{key}" class="site-btn site-btn-{key}">{name} '
+        f'<span class="badge">{n_total if key == "all" else active_by_site.get(key, 0)}</span></a>'
+        for key, name in sites
+    )
+    site_info = [
+        '<div class="site-info" data-site-info="all">Всички сайтове заедно — колоната '
+        '„Сайт“ показва откъде е обявата.</div>',
+        f'<div class="site-info" data-site-info="{IMOT_KEY}" hidden>Обяви от imot.bg.</div>',
+    ]
+    for res in agency_results or []:
+        if res["error"]:
+            status = (f'<span class="site-warn">⚠ Последното теглене е неуспешно '
+                      f'({_attr(res["error"])}) — показани са данните от предишния път.</span>')
+        else:
+            status = f'изтеглени при последното обновяване: {res["fetched"]}'
+        site_info.append(
+            f'<div class="site-info" data-site-info="{res["key"]}" hidden>'
+            f'<a href="{_attr(res["url"])}" target="_blank" rel="noopener">Търсенето в {res["site"]}</a>'
+            f' · {status}</div>'
+        )
+    site_info_html = "\n".join(site_info)
+
+    # ── Full HTML ─────────────────────────────────────────────────────────────
+    dashboard_html = f"""<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Имоти сем. Кирилови</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+<style>
+  :root {{
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --border:    #2a2d3a;
+    --text:      #e2e4f0;
+    --muted:     #7a7d9a;
+    --accent:    #4f9cf9;
+    --green:     #3ecf8e;
+    --orange:    #f59e0b;
+    --red:       #f43f5e;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+  }}
+
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+  body {{
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+  }}
+
+  /* ── Header ── */
+  header {{
+    padding: 28px 32px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    flex-wrap: wrap;
+  }}
+  header h1 {{
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }}
+  header h1 span {{ color: var(--accent); }}
+  .updated {{
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: auto;
+  }}
+
+  /* ── Stats bar ── */
+  .stats {{
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }}
+  .stat {{
+    flex: 1;
+    padding: 18px 24px;
+    background: var(--surface);
+    text-align: center;
+  }}
+  .stat-num {{
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--accent);
+  }}
+  .stat-num.green  {{ color: var(--green); }}
+  .stat-num.orange {{ color: var(--orange); }}
+  .stat-num.red    {{ color: var(--red); }}
+  .stat-label {{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-top: 4px;
+  }}
+
+  /* ── Nav tabs ── */
+  nav {{
+    padding: 0 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }}
+  nav a {{
+    display: inline-block;
+    padding: 14px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }}
+  nav a:hover  {{ color: var(--text); border-color: var(--border); }}
+  nav a.active {{ color: var(--accent); border-color: var(--accent); }}
+  nav a {{ cursor: pointer; }}
+  nav .badge {{
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 1px 7px;
+    margin-left: 4px;
+    border-radius: 99px;
+    background: var(--border);
+    color: var(--muted);
+  }}
+  nav a.active .badge {{ color: var(--accent); }}
+
+  /* ── Горен ред: сайтове — отделна лента с бутони ── */
+  nav.site-nav {{
+    background: var(--surface);
+    padding: 14px 32px;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    border-bottom: 2px solid var(--border);
+  }}
+  .site-nav-label {{
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    margin-right: 6px;
+  }}
+  nav.site-nav a.site-btn {{
+    --site: var(--accent);
+    padding: 8px 16px;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color 0.15s, background 0.15s;
+  }}
+  nav.site-nav a.site-btn-era     {{ --site: #fb7185; }}
+  nav.site-nav a.site-btn-home2u  {{ --site: var(--green); }}
+  nav.site-nav a.site-btn-yavlena {{ --site: var(--orange); }}
+  nav.site-nav a.site-btn:hover {{ border-color: var(--site); }}
+  nav.site-nav a.site-btn.active {{
+    color: var(--site);
+    border-color: var(--site);
+    background: color-mix(in srgb, var(--site) 14%, var(--bg));
+    box-shadow: inset 0 0 0 1px var(--site);
+  }}
+  nav.site-nav a.site-btn.active .badge {{ color: var(--site); }}
+  nav.view-nav a {{ padding: 11px 18px; font-size: 12px; }}
+  .site-info {{
+    padding: 10px 32px;
+    font-size: 12px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }}
+  .site-info a {{ color: var(--accent); text-decoration: none; }}
+  .site-warn {{ color: var(--orange); font-weight: 600; }}
+
+  /* етикет на сайта в таблиците */
+  .src {{
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    background: rgba(79, 156, 249, .14);
+    color: var(--accent);
+  }}
+  .src-era     {{ background: rgba(244, 63, 94, .14);  color: #fb7185; }}
+  .src-home2u  {{ background: rgba(62, 207, 142, .14); color: var(--green); }}
+  .src-yavlena {{ background: rgba(245, 158, 11, .14); color: var(--orange); }}
+  /* когато е избран един сайт, колоната "Сайт" е излишна */
+  main.one-site .col-src {{ display: none; }}
+
+  /* ── Filter bar ── */
+  .filter-bar {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }}
+  .filter-group {{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }}
+  .filter-label {{
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    white-space: nowrap;
+  }}
+  .filter-bar select,
+  .filter-bar input[type=number] {{
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }}
+  .filter-bar select {{ min-width: 160px; max-width: 220px; cursor: pointer; }}
+  .filter-bar input[type=number] {{ width: 88px; -moz-appearance: textfield; }}
+  .filter-bar input[type=number]::-webkit-outer-spin-button,
+  .filter-bar input[type=number]::-webkit-inner-spin-button {{ -webkit-appearance: none; }}
+  .filter-bar select:focus,
+  .filter-bar input:focus {{ border-color: var(--accent); }}
+  .filter-sep {{ color: var(--border); font-size: 16px; }}
+  .filter-reset {{
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-left: auto;
+  }}
+  .filter-reset:hover {{ border-color: var(--red); color: var(--red); }}
+  .filter-active-count {{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    white-space: nowrap;
+    display: none;
+  }}
+  .filter-active-count.visible {{ display: inline; }}
+
+  @media (max-width: 640px) {{
+    .filter-bar {{ padding: 12px 16px; }}
+    .filter-bar select {{ min-width: 120px; }}
+    .filter-bar input[type=number] {{ width: 70px; }}
+    .filter-reset {{ margin-left: 0; }}
+  }}
+
+  /* ── Sections ── */
+  main {{ padding: 0 32px 48px; }}
+  section {{ padding-top: 36px; display: none; }}
+  section.active-section {{ display: block; }}
+  section h2 {{
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }}
+  section h2 .badge {{
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 99px;
+    background: var(--border);
+    color: var(--muted);
+  }}
+  .section-desc {{
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }}
+
+  /* ── Search bar ── */
+  .search-wrap {{
+    margin-bottom: 12px;
+  }}
+  .search-wrap input {{
+    width: 320px;
+    max-width: 100%;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }}
+  .search-wrap input:focus {{ border-color: var(--accent); }}
+  .search-wrap input::placeholder {{ color: var(--muted); }}
+
+  /* ── Tables ── */
+  .table-wrap {{
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }}
+  table.data-table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }}
+  table.data-table thead {{
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }}
+  table.data-table th {{
+    background: var(--surface);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }}
+  table.data-table th:hover {{ color: var(--text); }}
+  table.data-table th.sorted-asc::after  {{ content: ' ↑'; }}
+  table.data-table th.sorted-desc::after {{ content: ' ↓'; }}
+
+  table.data-table td {{
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    max-width: 280px;
+    word-break: break-word;
+  }}
+  table.data-table td.nowrap {{ white-space: nowrap; }}
+  table.data-table tr:last-child td {{ border-bottom: none; }}
+  table.data-table tr:hover td {{ background: #1e2130; }}
+
+  table.data-table td.old-price {{
+    color: var(--muted);
+    text-decoration: line-through;
+  }}
+
+  table.sold-table td {{ color: var(--muted); }}
+  table.sold-table td a {{ color: var(--muted); }}
+  table.sold-table img {{ opacity: 0.5; }}
+
+  table.data-table a {{
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }}
+  table.data-table a:hover {{ text-decoration: underline; }}
+
+  /* price history cell — smaller mono */
+  table.data-table td:has(.history) {{ font-size: 11px; }}
+.history {{
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.35;
+    color: #a0a3c0;
+  }}
+  .site-history {{
+    color: #7dd3fc;
+  }}
+  /* вид строителство */
+  .constr {{
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 99px;
+    background: rgba(125, 211, 252, .12);
+    color: #7dd3fc;
+    font-size: 11px;
+    white-space: nowrap;
+  }}
+  /* възраст на обявата под датата "Добавена" */
+  .age {{
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+  }}
+  .price-down {{ color: var(--green) !important; font-weight: 600; }}
+  .price-up {{ color: var(--red) !important; font-weight: 600; }}
+
+  /* thumbnail images */
+  table.data-table td img {{
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    transition: transform 0.15s;
+  }}
+  table.data-table td img:hover {{
+    transform: scale(1.06);
+  }}
+
+  .empty-note {{
+    color: var(--muted);
+    font-size: 13px;
+    padding: 20px 0;
+  }}
+
+  /* ── Footer ── */
+  footer {{
+    text-align: center;
+    padding: 24px;
+    font-size: 12px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }}
+
+  @media (max-width: 640px) {{
+    header {{ padding: 16px; }}
+    main   {{ padding: 0 16px 32px; }}
+    nav    {{ padding: 0 16px; }}
+    nav.site-nav {{ padding: 12px 16px; gap: 6px; }}
+    nav.site-nav a.site-btn {{ padding: 6px 10px; font-size: 13px; }}
+    .site-nav-label {{ width: 100%; }}
+    .site-info {{ padding: 10px 16px; }}
+    .stats {{ flex-wrap: wrap; }}
+    .stat  {{ flex: 1 1 50%; }}
+    .stat-num {{ font-size: 22px; }}
+  }}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🏠 Имоти · <span>сем. Кирилови</span></h1>
+  <span class="updated">Обновено: {now_str}</span>
+</header>
+
+<!-- Числата са за избрания сайт — JS ги преброява при смяна на таба -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-num" data-count="all">{n_total}</div>
+    <div class="stat-label">Активни обяви</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num green" data-count="recent">{n_recent}</div>
+    <div class="stat-label">Нови ({RECENT_DAYS} дни)</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num orange" data-count="changed">{n_changed}</div>
+    <div class="stat-label">Промени в цена</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num red" data-count="sold">{n_sold}</div>
+    <div class="stat-label">Продадени / свалени</div>
+  </div>
+</div>
+
+<nav class="site-nav">
+{site_nav}
+</nav>
+
+<nav class="view-nav">
+  <a data-tab="all"     class="active">Всички активни <span class="badge" data-count="all">{n_total}</span></a>
+  <a data-tab="recent">Нови <span class="badge" data-count="recent">{n_recent}</span></a>
+  <a data-tab="changed">Промени <span class="badge" data-count="changed">{n_changed}</span></a>
+  <a data-tab="sold">Продадени <span class="badge" data-count="sold">{n_sold}</span></a>
+</nav>
+
+{site_info_html}
+
+<div class="filter-bar">
+  <div class="filter-group">
+    <span class="filter-label">Район</span>
+    <select id="f-loc">
+      <option value="">Всички</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Строителство</span>
+    <select id="f-constr">
+      <option value="">Всички</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Цена</span>
+    <input type="number" id="f-price-min" placeholder="от €" min="0" step="1000">
+    <span class="filter-sep">–</span>
+    <input type="number" id="f-price-max" placeholder="до €" min="0" step="1000">
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Етаж</span>
+    <input type="number" id="f-floor-min" placeholder="от" min="0" step="1">
+    <span class="filter-sep">–</span>
+    <input type="number" id="f-floor-max" placeholder="до" min="0" step="1">
+  </div>
+  <span class="filter-active-count" id="f-count"></span>
+  <button class="filter-reset" id="f-reset">✕ Изчисти</button>
+</div>
+
+<main>
+
+  <section id="all" class="active-section">
+    <h2>Всички активни обяви <span class="badge" data-count="all">{n_total}</span></h2>
+    <p class="section-desc">Пълен списък на текущо активните обяви. Младост 2 е показана първа; подредени са по „Добавена“ (първо най-новите).</p>
+    <div class="search-wrap">
+      <input type="text" id="all-search" placeholder="Търси по локация, цена, площ…" oninput="applyFilters()">
+    </div>
+    <div class="table-wrap">{all_table}</div>
+    <p class="empty-note filtered-empty" hidden>Няма обяви за избрания сайт / филтър.</p>
+  </section>
+
+  <section id="recent">
+    <h2>Нови обяви <span class="badge" data-count="recent">{n_recent}</span></h2>
+    <p class="section-desc">Обяви с дата от сайта (Коригирана/Публикувана) през последните {RECENT_DAYS} дни; ако сайтът не дава дата — по първото засичане.</p>
+    <div class="search-wrap">
+      <input type="text" id="recent-search" placeholder="Търси…" oninput="applyFilters()">
+    </div>
+    <div class="table-wrap">{recent_table}</div>
+    <p class="empty-note filtered-empty" hidden>Няма обяви за избрания сайт / филтър.</p>
+  </section>
+
+  <section id="changed">
+    <h2>Промени в цената <span class="badge" data-count="changed">{n_changed}</span></h2>
+    <p class="section-desc">Активни обяви с реална промяна в цената </p>
+    <div class="search-wrap">
+      <input type="text" id="changed-search" placeholder="Търси…" oninput="applyFilters()">
+    </div>
+    <div class="table-wrap">{changed_table}</div>
+    <p class="empty-note filtered-empty" hidden>Няма обяви за избрания сайт / филтър.</p>
+  </section>
+
+  <section id="sold">
+    <h2>Продадени / свалени <span class="badge" data-count="sold">{n_sold}</span></h2>
+    <p class="section-desc">Обяви, изчезнали от сайта (вероятно продадени или свалени).</p>
+    <div class="search-wrap">
+      <input type="text" id="sold-search" placeholder="Търси…" oninput="applyFilters()">
+    </div>
+    <div class="table-wrap">{sold_table}</div>
+    <p class="empty-note filtered-empty" hidden>Няма обяви за избрания сайт / филтър.</p>
+  </section>
+
+</main>
+
+<footer>
+  Последно обновен: {now_str}
+</footer>
+
+<script>
+// ── Location data (injected from Python) ─────────────────────────────────────
+const ALL_LOCATIONS = {locations_json};
+const ALL_CONSTRUCTIONS = {constructions_json};
+const HAS_UNKNOWN_CONSTR = {has_unknown_constr_json};
+// Стойност-маркер за "обяви без посочен вид строителство"
+const CONSTR_NONE = '__none__';
+
+// ── Populate district dropdown ────────────────────────────────────────────────
+(function () {{
+  const sel = document.getElementById('f-loc');
+  ALL_LOCATIONS.forEach(loc => {{
+    const opt = document.createElement('option');
+    opt.value = loc;
+    opt.textContent = loc;
+    sel.appendChild(opt);
+  }});
+}})();
+
+// ── Populate construction dropdown ────────────────────────────────────────────
+(function () {{
+  const sel = document.getElementById('f-constr');
+  ALL_CONSTRUCTIONS.forEach(c => {{
+    const opt = document.createElement('option');
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  }});
+  if (HAS_UNKNOWN_CONSTR) {{
+    const opt = document.createElement('option');
+    opt.value = CONSTR_NONE;
+    opt.textContent = 'Без посочен вид';
+    sel.appendChild(opt);
+  }}
+}})();
+
+// ── Табове: сайт (горен ред) × изглед (Всички активни / Нови / Промени / Продадени) ──
+let activeSite = 'all';
+let activeTab  = 'all';
+
+const siteLinks = document.querySelectorAll('nav.site-nav a[data-site]');
+const viewLinks = document.querySelectorAll('nav.view-nav a[data-tab]');
+const sections  = document.querySelectorAll('main section[id]');
+
+function siteOk(row) {{
+  return activeSite === 'all' || row.dataset.src === activeSite;
+}}
+
+// Броячите (статистика, табове, заглавия) са за избрания сайт, без останалите филтри
+function updateCounts() {{
+  sections.forEach(section => {{
+    const n = Array.from(section.querySelectorAll('table.data-table tbody tr')).filter(siteOk).length;
+    document.querySelectorAll(`[data-count="${{section.id}}"]`).forEach(el => el.textContent = n);
+  }});
+}}
+
+function activate(site, tab) {{
+  activeSite = site;
+  activeTab  = tab;
+  siteLinks.forEach(a => a.classList.toggle('active', a.dataset.site === site));
+  viewLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+  sections.forEach(s => s.classList.toggle('active-section', s.id === tab));
+  document.querySelectorAll('[data-site-info]').forEach(el => el.hidden = el.dataset.siteInfo !== site);
+  document.querySelector('main').classList.toggle('one-site', site !== 'all');
+  history.replaceState(null, '', '#' + site + '/' + tab);
+  updateCounts();
+  applyFilters();
+}}
+
+siteLinks.forEach(a => a.addEventListener('click', e => {{
+  e.preventDefault();
+  activate(a.dataset.site, activeTab);
+}}));
+viewLinks.forEach(a => a.addEventListener('click', e => {{
+  e.preventDefault();
+  activate(activeSite, a.dataset.tab);
+}}));
+
+// ── Unified filter + search ───────────────────────────────────────────────────
+function applyFilters() {{
+  const loc      = document.getElementById('f-loc').value.trim().toLowerCase();
+  const constr   = document.getElementById('f-constr').value.trim().toLowerCase();
+  const priceMin = parseFloat(document.getElementById('f-price-min').value) || null;
+  const priceMax = parseFloat(document.getElementById('f-price-max').value) || null;
+  const floorMin = parseFloat(document.getElementById('f-floor-min').value) || null;
+  const floorMax = parseFloat(document.getElementById('f-floor-max').value) || null;
+
+  // Текстово търсене само за активния таб
+  const activeSection = document.getElementById(activeTab);
+  const searchInput = activeSection ? activeSection.querySelector('.search-wrap input') : null;
+  const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+  // Проверяваме дали има активен филтър
+  const hasFilter = loc || constr || priceMin !== null || priceMax !== null ||
+                    floorMin !== null || floorMax !== null;
+
+  let totalVisible = 0;
+
+  // Прилагаме филтрите върху ВСИЧКИ таблици (за да са готови при превключване)
+  sections.forEach(section => {{
+    const isActive = section.id === activeTab;
+    let visibleInTab = 0;
+
+    section.querySelectorAll('table.data-table tbody tr').forEach(row => {{
+      const rowLoc    = (row.dataset.loc    || '').toLowerCase();
+      const rowConstr = (row.dataset.constr || '').toLowerCase();
+      const rowPrice  = parseFloat(row.dataset.price) || null;
+      const rowFloor  = parseFloat(row.dataset.floor);
+
+      const locOk   = !loc      || rowLoc === loc;
+      // CONSTR_NONE хваща обявите, за които сайтът не дава вид строителство
+      const constrOk = !constr ||
+                       (constr === CONSTR_NONE ? rowConstr === '' : rowConstr === constr);
+      const pMinOk  = priceMin === null || (rowPrice !== null && rowPrice >= priceMin);
+      const pMaxOk  = priceMax === null || (rowPrice !== null && rowPrice <= priceMax);
+      // партер = етаж 0, затова проверяваме за NaN, а не за 0
+      const fMinOk  = floorMin === null || (!isNaN(rowFloor) && rowFloor >= floorMin);
+      const fMaxOk  = floorMax === null || (!isNaN(rowFloor) && rowFloor <= floorMax);
+      // Текстово търсене само за активния таб
+      const textOk  = !isActive || !q || row.textContent.toLowerCase().includes(q);
+
+      const show = siteOk(row) && locOk && constrOk && pMinOk && pMaxOk && fMinOk && fMaxOk && textOk;
+      row.style.display = show ? '' : 'none';
+      if (show) visibleInTab++;
+    }});
+
+    // "Няма обяви" вместо празна таблица
+    const emptyNote = section.querySelector('.filtered-empty');
+    if (emptyNote) {{
+      emptyNote.hidden = visibleInTab > 0 || !section.querySelector('table.data-table');
+    }}
+    if (isActive) totalVisible = visibleInTab;
+  }});
+
+  // Брояч с видими резултати
+  const countEl = document.getElementById('f-count');
+  if (hasFilter || q) {{
+    countEl.textContent = `${{totalVisible}} резултата`;
+    countEl.classList.add('visible');
+  }} else {{
+    countEl.classList.remove('visible');
+  }}
+}}
+
+// ── Filter inputs ─────────────────────────────────────────────────────────────
+['f-loc', 'f-constr', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+  const el = document.getElementById(id);
+  el.addEventListener('input', applyFilters);
+  // Някои браузъри не пращат 'input' при избор от <select>
+  if (el.tagName === 'SELECT') el.addEventListener('change', applyFilters);
+}});
+
+document.getElementById('f-reset').addEventListener('click', () => {{
+  ['f-loc', 'f-constr', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+    document.getElementById(id).value = '';
+  }});
+  // Изчистваме и текстовото търсене на активния таб
+  const activeSection = document.getElementById(activeTab);
+  const searchInput = activeSection ? activeSection.querySelector('.search-wrap input') : null;
+  if (searchInput) searchInput.value = '';
+  applyFilters();
+}});
+
+// ── Sortable columns ──────────────────────────────────────────────────────────
+// Клетките с числа/дати носят data-sort, за да не се сортира по форматирания текст
+function sortValue(td) {{
+  if (!td) return '';
+  return (td.dataset.sort !== undefined ? td.dataset.sort : td.textContent).trim();
+}}
+
+document.querySelectorAll('table.data-table th').forEach(th => {{
+  th.addEventListener('click', () => {{
+    const table  = th.closest('table');
+    const tbody  = table.querySelector('tbody');
+    const rows   = Array.from(tbody.querySelectorAll('tr'));
+    const asc    = th.classList.contains('sorted-asc');
+    const colIdx = th.cellIndex;
+
+    table.querySelectorAll('th').forEach(t => t.classList.remove('sorted-asc','sorted-desc'));
+    th.classList.add(asc ? 'sorted-desc' : 'sorted-asc');
+
+    rows.sort((a, b) => {{
+      const va = sortValue(a.children[colIdx]);
+      const vb = sortValue(b.children[colIdx]);
+      // празните ("—") винаги най-отдолу, независимо от посоката
+      const ea = va === '' || va === '—';
+      const eb = vb === '' || vb === '—';
+      if (ea || eb) return ea === eb ? 0 : (ea ? 1 : -1);
+      const na = Number(va);
+      const nb = Number(vb);
+      const cmp = !isNaN(na) && !isNaN(nb)
+        ? na - nb
+        : va.localeCompare(vb, 'bg', {{ numeric: true }});
+      return asc ? -cmp : cmp;
+    }});
+    rows.forEach(r => tbody.appendChild(r));
+  }});
+}});
+
+// ── Таб от адреса: #<сайт>/<изглед>, напр. #era/recent (старите #recent също работят) ──
+function activateFromHash() {{
+  const [first, second] = location.hash.replace('#', '').split('/');
+  const siteIds = Array.from(siteLinks).map(a => a.dataset.site);
+  const tabIds  = Array.from(sections).map(s => s.id);
+  if (second === undefined && tabIds.includes(first)) {{
+    activate('all', first);
+  }} else {{
+    activate(siteIds.includes(first) ? first : 'all', tabIds.includes(second) ? second : 'all');
+  }}
+}}
+window.addEventListener('hashchange', activateFromHash);
+activateFromHash();
+</script>
+
+</body>
+</html>"""
+
+    # Публичният сайт съдържа само криптирания dashboard + поле за парола
+    HTML_OUTPUT.write_text(secure_store.encrypt_page(dashboard_html), encoding="utf-8")
+    logger.info(f"HTML dashboard written to {HTML_OUTPUT}")
+
+
+# ================= SCRAPING =================
+with sync_playwright() as p:
+    logger.info("Opening browser (headless)…")
+    browser = p.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"]
+    )
+    page = browser.new_page()
+    page.set_extra_http_headers({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
+    total_ads = None
+    items_per_page = 40
+
+    try:
+        logger.info(f"Loading first page: {base_url}")
+        page.goto(base_url, wait_until='domcontentloaded', timeout=60000)
+        page.wait_for_selector('div.item', timeout=25000)
+
+        html_content = page.content()
+        total_ads = parse_total_ads(html_content)
+        if total_ads:
+            logger.info(f"Total listings: {total_ads}")
+        else:
+            logger.warning("Could not extract total listings count")
+
+        parse_page(html_content, pg_num=1)
+
+        max_pages = (
+            (total_ads // items_per_page) + (1 if total_ads % items_per_page else 0)
+            if total_ads else 5
+        )
+        logger.info(f"Planning to scrape up to {max_pages} pages")
+
+        pg = 2
+        while pg <= max_pages + 2:
+            try:
+                url = (
+                    base_url.replace('?', f'/p-{pg}?')
+                    if '?' in base_url else f"{base_url}/p-{pg}"
+                )
+                logger.info(f"Loading page {pg}: {url}")
+                page.goto(url, wait_until='domcontentloaded', timeout=45000)
+                try:
+                    page.wait_for_selector('div.item', timeout=12000)
+                except PlaywrightTimeoutError:
+                    logger.info(f"No more listings on page {pg}")
+                    break
+                scraped = parse_page(page.content(), pg_num=pg)
+                if scraped == 0:
+                    logger.info(f"Empty page {pg} → stopping")
+                    break
+                time.sleep(2.8 + random.uniform(0, 1.8))
+            except Exception as scrape_err:
+                logger.error(f"Error on page {pg}: {scrape_err}")
+                break
+            pg += 1
+
+    except Exception as e:
+        logger.critical(f"Critical scraping error: {e}")
+    finally:
+        browser.close()
+        logger.info("Browser closed")
+
+# ================= ДРУГИ АГЕНЦИИ (ERA, Home2U, Явлена) =================
+# Не хвърля грешка: ако някой сайт пропадне, табът му показва предишните данни
+agency_results = agencies.run_all(TODAY)
+
+# ================= PROCESSING =================
+if not listings:
+    logger.warning("No listings scraped from imot.bg → обновявам само табовете на агенциите")
+    try:
+        if secure_store.exists(HISTORY_FILE):
+            generate_html(secure_store.read_parquet(HISTORY_FILE), NOW_STR, agency_results)
+    except Exception as html_err:
+        logger.error(f"HTML generation failed: {html_err}")
+    exit()
+
+df_new = pd.DataFrame(listings)
+df_sold_now = pd.DataFrame()
+
+selenium_results = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist())
+df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("price_history", "")
+)
+# === DEBUG: проверка дали има данни ===
+num_with_history = df_new[COL_SITE_PRICE_HISTORY].str.strip().astype(bool).sum()
+logger.info(f"Извлечени ценови истории: {num_with_history} от {len(df_new)} обяви")
+
+df_new[COL_IMAGES] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("images", "")
+)
+
+# ── Дата на обявата, свалена от самата страница в imot.bg ─────────────────────
+df_new[COL_SITE_DATE] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("site_date", "")
+)
+df_new[COL_SITE_DATE_KIND] = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("site_date_kind", "")
+)
+num_with_date = df_new[COL_SITE_DATE].str.strip().astype(bool).sum()
+logger.info(f"Извлечени дати на обявите: {num_with_date} от {len(df_new)} обяви")
+
+# ── Вид строителство: детайлната страница е меродавна, списъкът е резервен ────
+site_construction = df_new[COL_LINK].map(
+    lambda u: selenium_results.get(u, {}).get("construction", "")
+)
+df_new[COL_CONSTRUCTION] = site_construction.where(
+    site_construction.astype(str).str.strip() != "",
+    df_new[COL_CONSTRUCTION].fillna("") if COL_CONSTRUCTION in df_new.columns else "",
+).fillna("").astype(str)
+num_with_constr = df_new[COL_CONSTRUCTION].str.strip().astype(bool).sum()
+logger.info(f"Разпознат вид строителство: {num_with_constr} от {len(df_new)} обяви")
+
+# "Добавена" = датата от сайта; ако липсва → днешната дата (за съвсем нови обяви;
+# за вече познати обяви по-долу се пази старата стойност)
+df_new[COL_FIRST_SEEN] = df_new[COL_SITE_DATE].where(
+    df_new[COL_SITE_DATE].astype(str).str.strip() != "", TODAY
+)
+
+df_history = pd.DataFrame()
+if secure_store.exists(HISTORY_FILE):
+    try:
+        df_history = secure_store.read_parquet(HISTORY_FILE)
+        logger.info(f"Loaded history: {len(df_history)} rows")
+    except Exception as e:
+        logger.error(f"Error reading parquet: {e}")
+
+if not df_history.empty:
+    df_history = deduplicate_history(df_history, COL_LINK, COL_PRICE_HISTORY)
+    df_history[COL_PRICE_HISTORY] = df_history[COL_PRICE_HISTORY].fillna("")
+    for col, default in [
+        (COL_SITE_PRICE_HISTORY, ""),
+        (COL_SOLD, False),
+        (COL_FIRST_SEEN, ""),
+        (COL_IMAGES, ""),
+        (COL_LAST_PRICE_CHANGE_DATE, ""),
+        (COL_BULK_IMPORT, False),
+        (COL_SITE_DATE, ""),
+        (COL_SITE_DATE_KIND, ""),
+        (COL_FIRST_SCRAPED, ""),
+        (COL_CONSTRUCTION, ""),
+    ]:
+        if col not in df_history.columns:
+            logger.info(f"Историята няма колона '{col}' → добавям я с празна стойност")
+            df_history[col] = default
+    df_history[COL_SOLD] = df_history[COL_SOLD].fillna(False)
+
+    # Миграция: досегашният First_Seen означаваше "кога скраперът я видя за пръв път"
+    # → преместваме го в отделна колона, за да освободим First_Seen за датата от сайта.
+    df_history[COL_FIRST_SCRAPED] = df_history.apply(
+        lambda r: str(r.get(COL_FIRST_SCRAPED) or "").strip()
+                  or str(r.get(COL_FIRST_SEEN) or "").strip()
+                  or str(r.get(COL_SCRAPED_DATE) or "").strip(),
+        axis=1,
+    )
+
+df_all = df_history.copy()
+if not df_all.empty:
+    df_all = df_all.set_index(COL_LINK, drop=False)
+    for col, default in [
+        (COL_SOLD, False),
+        (COL_SITE_PRICE_HISTORY, ""),
+        (COL_FIRST_SEEN, ""),
+        (COL_IMAGES, ""),
+        (COL_LAST_PRICE_CHANGE_DATE, ""),
+        (COL_BULK_IMPORT, False),
+        (COL_SITE_DATE, ""),
+        (COL_SITE_DATE_KIND, ""),
+        (COL_FIRST_SCRAPED, ""),
+        (COL_CONSTRUCTION, ""),
+    ]:
+        if col not in df_all.columns:
+            df_all[col] = default
+
+# New listings
+df_new_only = (
+    df_new[~df_new[COL_LINK].isin(df_all[COL_LINK])]
+    if not df_all.empty else df_new.copy()
+)
+
+# Changed prices
+df_changed = pd.DataFrame()
+if not df_history.empty:
+    merged = df_new.merge(
+        df_history[[COL_LINK, COL_PRICE, COL_LOCATION, COL_SIZE, COL_PRICE_HISTORY]],
+        on=COL_LINK,
+        how='inner',
+        suffixes=('_new', '_old')
+    )
+    changed_mask = merged[f'{COL_PRICE}_new'] != merged[f'{COL_PRICE}_old']
+    changed = merged[changed_mask].copy()
+
+    if not changed.empty:
+        def update_history(hist_row):
+            hist = hist_row[f'{COL_PRICE_HISTORY}_old']
+            old_entry = format_price_history_entry(hist_row[f'{COL_PRICE}_old'], "before")
+            if old_entry and old_entry not in hist:
+                return f"{hist} → {old_entry}" if hist.strip() else old_entry
+            return hist
+
+
+        changed[f'{COL_PRICE_HISTORY}_updated'] = changed.apply(update_history, axis=1)
+        changed[f'{COL_PRICE_PER_SQM}_new'] = (
+            round(changed[f'{COL_PRICE}_new'] / changed[f'{COL_SIZE}_new'], 2)
+            if f'{COL_SIZE}_new' in changed.columns else None
+        )
+        df_changed = changed[[
+            f'{COL_LOCATION}_old',
+            f'{COL_PRICE}_old',
+            f'{COL_PRICE}_new',
+            f'{COL_SIZE}_new',
+            f'{COL_PRICE_PER_SQM}_new',
+            COL_LINK,
+            COL_SITE_PRICE_HISTORY,
+            COL_CONSTRUCTION,
+            f'{COL_PRICE_HISTORY}_updated',
+        ]].rename(columns={
+            f'{COL_LOCATION}_old': COL_LOCATION,
+            f'{COL_SIZE}_new': COL_SIZE,
+            f'{COL_PRICE_HISTORY}_updated': COL_PRICE_HISTORY,
+        })
+        logger.info(f"Found {len(df_changed)} price changes")
+
+for _, row in df_new.iterrows():
+    link = row[COL_LINK]
+    row_dict = row.to_dict()
+
+    if link in df_all.index:
+        old_price = df_all.at[link, COL_PRICE]
+        old_scraped_date = df_all.at[link, COL_SCRAPED_DATE]
+        new_price = row_dict.get(COL_PRICE)
+        new_scraped_date = TODAY
+        # ── Кога скраперът е видял обявата за пръв път (отделно от датата на сайта) ──
+        old_first_scraped = str(
+            df_all.at[link, COL_FIRST_SCRAPED] if COL_FIRST_SCRAPED in df_all.columns else ""
+        ).strip()
+        if not old_first_scraped:
+            old_first_scraped = str(df_all.at[link, COL_FIRST_SEEN] or old_scraped_date or "").strip()
+        row_dict[COL_FIRST_SCRAPED] = old_first_scraped
+
+        # ── "Добавена" = датата от самата обява в imot.bg ──
+        site_date = str(row_dict.get(COL_SITE_DATE) or "").strip()
+        if not site_date and COL_SITE_DATE in df_all.columns:
+            # Тази обиколка не успя да прочете датата → пазим предишно свалената
+            site_date = str(df_all.at[link, COL_SITE_DATE] or "").strip()
+            if site_date:
+                row_dict[COL_SITE_DATE] = site_date
+                if not str(row_dict.get(COL_SITE_DATE_KIND) or "").strip():
+                    row_dict[COL_SITE_DATE_KIND] = str(
+                        df_all.at[link, COL_SITE_DATE_KIND]
+                        if COL_SITE_DATE_KIND in df_all.columns else ""
+                    )
+        row_dict[COL_FIRST_SEEN] = (
+            site_date
+            or str(df_all.at[link, COL_FIRST_SEEN] or "").strip()
+            or old_first_scraped
+        )
+
+        # ── Вид строителство: не трием вече познат вид с празна стойност ──
+        if not str(row_dict.get(COL_CONSTRUCTION) or "").strip() \
+                and COL_CONSTRUCTION in df_all.columns:
+            prev_constr = str(df_all.at[link, COL_CONSTRUCTION] or "").strip()
+            if prev_constr:
+                row_dict[COL_CONSTRUCTION] = prev_constr
+
+        existing_images = df_all.at[link, COL_IMAGES] if COL_IMAGES in df_all.columns else ""
+
+        if existing_images and not row_dict.get(COL_IMAGES):
+            row_dict[COL_IMAGES] = existing_images
+
+        for col in df_all.columns:
+            if col in row_dict and col != COL_PRICE_HISTORY and col != COL_FIRST_SEEN:
+                df_all.at[link, col] = row_dict[col]
+        # First_Seen вече идва от обявата, затова го записваме изрично
+        df_all.at[link, COL_FIRST_SEEN] = row_dict[COL_FIRST_SEEN]
+        if COL_SITE_PRICE_HISTORY in row_dict:
+            old_site_hist = str(df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else "") or ""
+            new_site_hist = str(row_dict[COL_SITE_PRICE_HISTORY] or "").strip()
+            # Пазим старата история ако новата е празна или по-кратка (Selenium може да е пропуснал)
+            if new_site_hist and len(new_site_hist) >= len(old_site_hist):
+                df_all.at[link, COL_SITE_PRICE_HISTORY] = new_site_hist
+            else:
+                # Новата е празна/по-кратка → запазваме старата
+                new_site_hist = old_site_hist
+            if new_site_hist and new_site_hist != old_site_hist and " → " in new_site_hist:
+                site_last_date = extract_last_price_change_date("", new_site_hist)
+                if site_last_date:
+                    existing_chg = df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] if COL_LAST_PRICE_CHANGE_DATE in df_all.columns else ""
+                    if not existing_chg or site_last_date > str(existing_chg):
+                        df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] = site_last_date
+
+        if pd.notna(new_price) and pd.notna(old_price) and old_price != new_price:
+            current_hist = df_all.at[link, COL_PRICE_HISTORY] or ""
+            old_entry = format_price_history_entry(old_price, old_scraped_date)
+            if old_entry and old_entry not in current_hist:
+                current_hist = f"{current_hist} → {old_entry}" if current_hist.strip() else old_entry
+            new_entry = format_price_history_entry(new_price, new_scraped_date)
+            if new_entry and new_entry not in current_hist:
+                current_hist = f"{current_hist} → {new_entry}" if current_hist.strip() else new_entry
+            df_all.at[link, COL_PRICE_HISTORY] = current_hist
+            df_all.at[link, COL_LAST_PRICE_CHANGE_DATE] = TODAY
+    else:
+        if pd.notna(row_dict.get(COL_PRICE)):
+            row_dict[COL_PRICE_HISTORY] = format_price_history_entry(row_dict[COL_PRICE], TODAY)
+        row_dict[COL_SOLD] = False
+        row_dict[COL_FIRST_SCRAPED] = TODAY
+        # "Добавена" = датата от обявата; ако сайтът не я дава → днес
+        row_dict[COL_FIRST_SEEN] = str(row_dict.get(COL_SITE_DATE) or "").strip() or TODAY
+        row_dict[COL_BULK_IMPORT] = len(df_new_only) > BULK_IMPORT_THRESHOLD
+        df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
+
+if not df_history.empty:
+    base_unsold = df_history[~df_history[COL_SOLD].fillna(False)]
+    if not base_unsold.empty:
+        sold_links = set(base_unsold[COL_LINK]) - set(df_new[COL_LINK])
+        if sold_links:
+            df_sold_now = base_unsold[base_unsold[COL_LINK].isin(sold_links)].copy()
+            if COL_SOLD not in df_all.columns:
+                df_all[COL_SOLD] = False
+            df_all.loc[df_all[COL_LINK].isin(sold_links), COL_SOLD] = True
+
+df_all = df_all.drop_duplicates(subset=[COL_LINK], keep='last').reset_index(drop=True)
+
+# ── На колко дни е всяка обява спрямо "Добавена" (преизчислява се всеки run) ──
+df_all[COL_AGE_DAYS] = pd.array(
+    [days_since(v) for v in df_all[COL_FIRST_SEEN]], dtype="Int64"
+)
+
+# ── Нормализация преди запис ──────────────────────────────────────────────────
+# Нови колони върху стари редове идват като NaN (от concat/reindex). За parquet
+# това прави object колона със смесени типове, а в Excel се показва като "nan".
+# Затова текстовите колони се привеждат до чист низ.
+for _text_col in TEXT_COLS:
+    if _text_col in df_all.columns:
+        df_all[_text_col] = (
+            df_all[_text_col].fillna("").astype(str).replace({"nan": "", "None": ""})
+        )
+
+logger.info(
+    f"New: {len(df_new_only)}  |  Changed: {len(df_changed)}  |  "
+    f"Sold: {len(df_sold_now)}  |  Total unique: {len(df_all)}"
+)
+
+secure_store.write_parquet(df_all, HISTORY_FILE)
+df_all.to_csv("all_listings_history.csv", index=False, encoding='utf-8-sig')
+
+# ================= GENERATE HTML DASHBOARD =================
+generate_html(df_all, NOW_STR, agency_results)
+
+# ================= EXCEL EXPORT =================
+df_export = df_all.copy()
+df_export['Current Price'] = df_export[COL_PRICE].apply(lambda x: f"{int(round(x)):,} €" if pd.notna(x) else "")
+df_export['Price per m²'] = df_export[COL_PRICE_PER_SQM].apply(
+    lambda x: f"{int(round(x)):,} €/m²" if pd.notna(x) else "")
+df_export['Size'] = df_export[COL_SIZE].apply(lambda x: f"{int(x)} m²" if pd.notna(x) else "")
+df_export[COL_PRICE_HISTORY] = df_export.apply(
+    lambda r: append_current_if_needed(r[COL_PRICE_HISTORY], r[COL_PRICE], r[COL_SCRAPED_DATE]), axis=1
+)
+df_export = df_export.rename(columns={
+    COL_PRICE_HISTORY: 'Price History',
+    COL_SITE_PRICE_HISTORY: 'Site price history',
+    COL_PRICE: 'Current Price (numeric)',
+    COL_PRICE_PER_SQM: 'Price per m² (numeric)',
+    COL_SIZE: 'Size (numeric)',
+    COL_SCRAPED_DATE: 'Scraped Date',
+    COL_FIRST_SEEN: 'Added Date (imot.bg)',
+    COL_SITE_DATE: 'Ad Date (imot.bg)',
+    COL_SITE_DATE_KIND: 'Ad Date Type',
+    COL_FIRST_SCRAPED: 'First Scraped Date',
+    COL_AGE_DAYS: 'Age (days)',
+    COL_CONSTRUCTION: 'Construction Type',
+    COL_LOCATION: 'Location',
+    COL_TITLE: 'Title',
+    COL_FLOOR: 'Floor',
+    COL_TOTAL_FLOORS: 'Total Floors',
+    COL_YEAR: 'Year Built',
+    COL_IMAGES: 'Image Paths',
+})
+df_export.to_excel(excel_file, index=False, engine='openpyxl', sheet_name='imot.bg')
+
+# ── Агенциите — всяка на отделен лист ─────────────────────────────────────────
+AGENCY_EXCEL_COLS = {
+    COL_LOCATION: 'Location', COL_PRICE: 'Current Price (numeric)', COL_SIZE: 'Size (numeric)',
+    COL_PRICE_PER_SQM: 'Price per m² (numeric)', COL_FLOOR: 'Floor', COL_TOTAL_FLOORS: 'Total Floors',
+    COL_YEAR: 'Year Built', COL_CONSTRUCTION: 'Construction Type', COL_FIRST_SEEN: 'Added Date',
+    COL_SCRAPED_DATE: 'Scraped Date', COL_PRICE_HISTORY: 'Price History', COL_SOLD: COL_SOLD,
+    COL_LINK: 'Link', COL_TITLE: 'Title',
+}
+try:
+    with pd.ExcelWriter(excel_file, engine='openpyxl', mode='a') as xw:
+        for res in agency_results:
+            df_ag = res["df"]
+            if not df_ag.empty:
+                cols = [c for c in AGENCY_EXCEL_COLS if c in df_ag.columns]
+                df_ag[cols].rename(columns=AGENCY_EXCEL_COLS).to_excel(
+                    xw, sheet_name=res["name"][:31], index=False)
+except Exception as e:
+    logger.error(f"Excel agency sheets error: {e}")
+
+try:
+    wb = load_workbook(excel_file)
+    for ws in wb.worksheets:
+        sold_col_idx = None
+        for col_idx in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col_idx).value == COL_SOLD:
+                sold_col_idx = col_idx
+                break
+        if sold_col_idx:
+            for row_idx in range(2, ws.max_row + 1):
+                if ws.cell(row=row_idx, column=sold_col_idx).value:
+                    for col_idx in range(1, ws.max_column + 1):
+                        c = ws.cell(row=row_idx, column=col_idx)
+                        c.font = Font(strikethrough=True, color="FF777777")
+    wb.save(excel_file)
+except Exception as e:
+    logger.error(f"Excel formatting error: {e}")
+
+logger.info(f"Excel saved: {excel_file}")
+
+# ================= EMAIL =================
+if len(df_new_only) > 0 or len(df_changed) > 0 or len(df_sold_now) > 0 \
+        or agencies.has_events(agency_results):
+
+    def fmt_p(x):
+        try:
+            return f"{float(x):,.0f} €" if pd.notna(x) and x != "" else "—"
+        except (ValueError, TypeError):
+            return str(x) if x else "—"
+
+    def fmt_s(x):
+        try:
+            return f"{int(float(x))} m²" if pd.notna(x) and x != "" else "—"
+        except (ValueError, TypeError):
+            return str(x) if x else "—"
+
+    def fmt_m(x):
+        try:
+            return f"{int(round(float(x)))} €/m²" if pd.notna(x) and x != "" else "—"
+        except (ValueError, TypeError):
+            return str(x) if x else "—"
+
+
+    CSS = """<style>
+body{font-family:Arial,sans-serif;line-height:1.6;color:#333;background:#f9f9f9}
+.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:8px;border:1px solid #e0e0e0}
+.hdr{background:#1a1d27;color:#fff;padding:20px 28px;border-radius:8px 8px 0 0}
+.hdr h1{font-size:18px;margin:0}
+.hdr p{font-size:12px;color:#7a7d9a;margin:4px 0 0}
+.body{padding:24px 28px}
+h3{color:#444;font-size:14px;margin:24px 0 8px;border-bottom:2px solid #f0f0f0;padding-bottom:6px}
+.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
+.scroll-hint{font-size:11px;color:#aaa;margin-bottom:4px;display:none}
+.imot-table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px}
+.imot-table th{background:#f5f5f5;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#666;padding:8px 12px;text-align:left;border-bottom:2px solid #e0e0e0;white-space:nowrap}
+.imot-table td{padding:9px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+.imot-table tr:hover td{background:#fafafa}
+a{color:#4f9cf9;text-decoration:none}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
+.pill.new{background:#dcfce7;color:#166534}
+.pill.chg{background:#fef3c7;color:#92400e}
+.pill.sld{background:#fee2e2;color:#991b1b}
+.sold-table td{color:#999;text-decoration:line-through}
+.ftr{background:#f5f5f5;padding:12px 28px;font-size:12px;color:#999;text-align:center;border-radius:0 0 8px 8px}
+@media screen and (max-width:600px){
+  .body{padding:16px}
+  .scroll-hint{display:block}
+  .imot-table{font-size:12px}
+  .imot-table td,.imot-table th{padding:7px 8px}
+  .col-history{display:none}
+}
+</style>"""
+
+
+    # Целият ред е линк към обявата: всяка клетка е обвита в <a> (имейл клиентите
+    # не пускат JS, а <tr> не може да е линк). Локацията е оцветена като линк,
+    # за да личи, че редът се цъка; останалите клетки пазят цвета си.
+    ROW_LINK_STYLE = "color:inherit;text-decoration:none;display:block"
+    LOC_LINK_STYLE = "color:#2563eb;text-decoration:underline;font-weight:600;display:block;white-space:nowrap"
+
+    def to_html_table(df_in, cols, headers, extra_class=""):
+        tbl_head = "<tr>" + "".join(
+            f"<th class='col-history'>{h}</th>" if h in ("История (сайт)", "История на цената")
+            else f"<th>{h}</th>"
+            for h in headers
+        ) + "</tr>"
+        tbl_rows = []
+        for _, email_row in df_in.iterrows():
+            link = email_row.get(COL_LINK, "")
+            link = link if isinstance(link, str) and link.startswith("http") else ""
+            cells = []
+            for col_name, h in zip(cols, headers):
+                v = email_row.get(col_name, "")
+                is_history = h in ("История (сайт)", "История на цената")
+                td_attr = " class='col-history'" if is_history else ""
+                if col_name == COL_PRICE:
+                    content = fmt_p(v)
+                elif col_name == COL_SIZE:
+                    content = fmt_s(v)
+                elif col_name == COL_PRICE_PER_SQM:
+                    content = fmt_m(v)
+                elif col_name == 'Price_EUR_old':
+                    td_attr = " style='text-decoration:line-through;color:#999'"
+                    content = fmt_p(v)
+                elif col_name == COL_FIRST_SEEN:
+                    d = str(v).strip() if pd.notna(v) else ""
+                    age_txt = fmt_age(days_since(d))
+                    content = (
+                        f"{d or '—'}<br>"
+                        f"<span style='color:#999;font-size:11px'>{age_txt}</span>"
+                    )
+                else:
+                    content = v if pd.notna(v) and v != '' else '—'
+                if link:
+                    a_style = LOC_LINK_STYLE if col_name == COL_LOCATION else ROW_LINK_STYLE
+                    content = f"<a href='{link}' target='_blank' style='{a_style}'>{content}</a>"
+                cells.append(f"<td{td_attr}>{content}</td>")
+            tbl_rows.append("<tr>" + "".join(cells) + "</tr>")
+        cls = f"imot-table {extra_class}".strip()
+        hint = "<div class='scroll-hint'>← плъзни за повече →</div>"
+        return f"{hint}<div class='tbl-scroll'><table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table></div>"
+
+
+    new_section = changed_section = sold_section = ""
+
+    if not df_new_only.empty:
+        tbl = to_html_table(df_new_only,
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                             COL_CONSTRUCTION, COL_FIRST_SEEN,
+                             COL_SITE_PRICE_HISTORY],
+                            ["Локация", "Цена", "Площ", "€/m²", "Строителство",
+                             "Добавена", "История (сайт)"])
+        new_section = f"""<h3><span class="pill new">НОВИ</span> &nbsp;{len(df_new_only)} обяви &mdash; {TODAY}</h3>{tbl}"""
+
+    if not df_changed.empty:
+        df_ch = df_changed.copy()
+        if COL_PRICE_PER_SQM not in df_ch.columns and f'{COL_PRICE_PER_SQM}_new' in df_ch.columns:
+            df_ch = df_ch.rename(columns={f'{COL_PRICE_PER_SQM}_new': COL_PRICE_PER_SQM})
+        if COL_PRICE in df_ch.columns and COL_SIZE in df_ch.columns and COL_PRICE_PER_SQM not in df_ch.columns:
+            df_ch[COL_PRICE_PER_SQM] = (df_ch[COL_PRICE] / df_ch[COL_SIZE]).round(2)
+        tbl = to_html_table(df_ch,
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                             COL_CONSTRUCTION, COL_PRICE_HISTORY,
+                             COL_SITE_PRICE_HISTORY],
+                            ["Локация", "Нова цена", "Площ", "€/m²", "Строителство",
+                             "История на цената", "История (сайт)"])
+        changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
+
+    if not df_sold_now.empty:
+        tbl = to_html_table(df_sold_now,
+                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                             COL_CONSTRUCTION, COL_SITE_PRICE_HISTORY],
+                            ["Локация", "Последна цена", "Площ", "€/m²",
+                             "Строителство", "История (сайт)"],
+                            extra_class="sold-table")
+        sold_section = f"""<h3><span class="pill sld">ПРОДАДЕНИ</span> &nbsp;{len(df_sold_now)} обяви &mdash; {TODAY}</h3>{tbl}"""
+
+    subject_parts = []
+    if not df_new_only.empty:
+        subject_parts.append(f"{len(df_new_only)} НОВИ")
+    if not df_changed.empty:
+        subject_parts.append(f"{len(df_changed)} ПРОМЯНА")
+    if not df_sold_now.empty:
+        subject_parts.append(f"{len(df_sold_now)} ПРОДАДЕНИ")
+
+    # ── Агенциите (ERA, Home2U, Явлена) — същите секции с името на сайта ──
+    agency_sections = ""
+    for res in agency_results:
+        name = res["name"]
+        # Първоначалното зареждане (първи run / сменен филтър) не е "нови обяви"
+        if not res["new"].empty and not res["bulk"]:
+            tbl = to_html_table(res["new"],
+                                [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                                 COL_CONSTRUCTION, COL_FIRST_SEEN],
+                                ["Локация", "Цена", "Площ", "€/m²", "Строителство", "Добавена"])
+            agency_sections += f"""<h3><span class="pill new">НОВИ · {name}</span> &nbsp;{len(res["new"])} обяви &mdash; {TODAY}</h3>{tbl}"""
+            subject_parts.append(f"{len(res['new'])} НОВИ ({name})")
+        if not res["changed"].empty:
+            tbl = to_html_table(res["changed"],
+                                [COL_LOCATION, 'Price_EUR_old', COL_PRICE, COL_SIZE,
+                                 COL_PRICE_PER_SQM, COL_PRICE_HISTORY],
+                                ["Локация", "Стара цена", "Нова цена", "Площ", "€/m²",
+                                 "История на цената"])
+            agency_sections += f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА · {name}</span> &nbsp;{len(res["changed"])} обяви &mdash; {TODAY}</h3>{tbl}"""
+            subject_parts.append(f"{len(res['changed'])} ПРОМЯНА ({name})")
+        if not res["sold"].empty:
+            tbl = to_html_table(res["sold"],
+                                [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
+                                 COL_CONSTRUCTION],
+                                ["Локация", "Последна цена", "Площ", "€/m²", "Строителство"],
+                                extra_class="sold-table")
+            agency_sections += f"""<h3><span class="pill sld">ПРОДАДЕНИ · {name}</span> &nbsp;{len(res["sold"])} обяви &mdash; {TODAY}</h3>{tbl}"""
+            subject_parts.append(f"{len(res['sold'])} ПРОДАДЕНИ ({name})")
+
+    subject = f"Имоти – {' · '.join(subject_parts)} – {TODAY}"
+
+    email_html = f"""<html><head><meta charset="utf-8">{CSS}</head><body>
+<div class="wrap">
+  <div class="hdr">
+    <h1>🏠 Имоти · сем. Кирилови</h1>
+    <p>Автоматичен отчет · {NOW_STR}</p>
+  </div>
+  <div class="body">
+    {new_section}{changed_section}{sold_section}{agency_sections}
+    <p style="margin-top:8px;font-size:12px;color:#999">👆 Цъкни върху ред, за да отвориш обявата.</p>
+    <p style="margin-top:24px;font-size:13px;color:#666">
+      Общо уникални обяви в базата: <strong>{len(df_all)}</strong><br>
+      Пълният списък е прикачен като Excel.
+    </p>
+  </div>
+  <div class="ftr">Тук може да е вашият следващ ДОМ! 🏡</div>
+</div>
+</body></html>"""
+
+    msg = MIMEMultipart()
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = ", ".join(RECEIVERS)
+    msg['Subject'] = subject
+    msg.attach(MIMEText(email_html, "html", _charset="utf-8"))
+
+    try:
+        with open(excel_file, 'rb') as f:
+            part = MIMEApplication(f.read(), Name=excel_file)
+            part['Content-Disposition'] = f'attachment; filename="{excel_file}"'
+            msg.attach(part)
+    except Exception as attach_err:
+        logger.error(f"Failed to attach Excel: {attach_err}")
+
+    try:
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        logger.info("✔ Email sent")
+    except Exception as smtp_err:
+        logger.error(f"❌ Email error: {smtp_err}")
+else:
+    logger.info("No changes → email not sent")
+
+logger.info("=== Script finished ===")
