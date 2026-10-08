@@ -1093,7 +1093,15 @@ def _build_rows(df, cols):
             floor_num = ""
         constr_val = _text(row.get(COL_CONSTRUCTION, ""))
         src_key = _text(row.get(COL_SOURCE_KEY, "")) or IMOT_KEY
-        tr_attrs = (f'data-src="{_attr(src_key)}" '
+        dup_tags = [tag for tag, on in (
+            ("repost", bool(row.get(duplicates.COL_DUP_REPOSTED, False) == True)),
+            ("also", bool(_text(row.get(duplicates.COL_DUP_ALSO, "")))),
+            ("down", bool(row.get(duplicates.COL_DUP_PREV_LOWER, False) == True)),
+            ("prev", bool(_text(row.get(duplicates.COL_DUP_PREV, "")))),
+            ("still", bool(_text(row.get(duplicates.COL_DUP_STILL, "")))),
+        ) if on]
+        tr_attrs = (f'data-dup="{" ".join(dup_tags)}" '
+                    f'data-src="{_attr(src_key)}" '
                     f'data-loc="{_attr(loc_val)}" data-price="{price_num}" '
                     f'data-floor="{floor_num}" data-constr="{_attr(constr_val)}"')
 
@@ -1653,6 +1661,68 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
   .filter-bar select:focus,
   .filter-bar input:focus {{ border-color: var(--accent); }}
   .filter-sep {{ color: var(--border); font-size: 16px; }}
+  /* падащо меню с отметки ("Бележки") — изглежда като останалите менюта */
+  .ms {{ position: relative; }}
+  .ms summary {{
+    list-style: none;
+    position: relative;
+    min-width: 190px;
+    max-width: 260px;
+    padding: 6px 30px 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }}
+  .ms summary::-webkit-details-marker {{ display: none; }}
+  .ms summary::after {{ content: '▾'; position: absolute; right: 10px; color: var(--muted); }}
+  .ms[open] summary {{ border-color: var(--accent); }}
+  .ms-panel {{
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 290px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+    display: flex;
+    flex-direction: column;
+  }}
+  .ms-panel label {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    cursor: pointer;
+  }}
+  .ms-panel label:hover {{ background: var(--bg); }}
+  .ms-panel label.ms-zero {{ opacity: .45; }}
+  /* надписът ("Район", "Бележки") остава до бутона и при отворено меню */
+  .filter-group:has(> .ms) > .filter-label {{ align-self: flex-start; margin-top: 8px; }}
+  .ms-options {{ display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }}
+  .ms-mode {{
+    margin-top: 4px;
+    padding: 6px 8px 2px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+  }}
+  .ms-mode label {{ padding: 4px 0; font-size: 12px; color: var(--muted); }}
+  @media (max-width: 640px) {{
+    .ms-panel {{ position: static; min-width: 0; margin-top: 6px; }}
+  }}
   .filter-reset {{
     padding: 6px 14px;
     background: transparent;
@@ -1926,15 +1996,34 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
 <div class="filter-bar">
   <div class="filter-group">
     <span class="filter-label">Район</span>
-    <select id="f-loc">
-      <option value="">Всички</option>
-    </select>
+    <details class="ms" id="f-loc">
+      <summary>Всички</summary>
+      <div class="ms-panel"><div class="ms-options"></div></div>
+    </details>
   </div>
   <div class="filter-group">
     <span class="filter-label">Строителство</span>
-    <select id="f-constr">
-      <option value="">Всички</option>
-    </select>
+    <details class="ms" id="f-constr">
+      <summary>Всички</summary>
+      <div class="ms-panel"><div class="ms-options"></div></div>
+    </details>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Бележки</span>
+    <details class="ms" id="f-dup">
+      <summary id="f-dup-summary">Всички</summary>
+      <div class="ms-panel">
+        <label><input type="checkbox" value="repost"> <span data-label="⟳ Качени наново">⟳ Качени наново</span></label>
+        <label><input type="checkbox" value="also"> <span data-label="Също в друга обява">Също в друга обява</span></label>
+        <label><input type="checkbox" value="down"> <span data-label="↓ По-евтини от предишната обява">↓ По-евтини от предишната обява</span></label>
+        <label><input type="checkbox" value="still"> <span data-label="Свалени, но още се продават">Свалени, но още се продават</span></label>
+        <div class="ms-mode">
+          <span>Комбинирай:</span>
+          <label><input type="radio" name="f-dup-mode" value="all" checked> всички избрани</label>
+          <label><input type="radio" name="f-dup-mode" value="any"> която и да е</label>
+        </div>
+      </div>
+    </details>
   </div>
   <div class="filter-group">
     <span class="filter-label">Цена</span>
@@ -2008,33 +2097,57 @@ const HAS_UNKNOWN_CONSTR = {has_unknown_constr_json};
 // Стойност-маркер за "обяви без посочен вид строителство"
 const CONSTR_NONE = '__none__';
 
-// ── Populate district dropdown ────────────────────────────────────────────────
-(function () {{
-  const sel = document.getElementById('f-loc');
-  ALL_LOCATIONS.forEach(loc => {{
-    const opt = document.createElement('option');
-    opt.value = loc;
-    opt.textContent = loc;
-    sel.appendChild(opt);
-  }});
-}})();
-
-// ── Populate construction dropdown ────────────────────────────────────────────
-(function () {{
-  const sel = document.getElementById('f-constr');
-  ALL_CONSTRUCTIONS.forEach(c => {{
-    const opt = document.createElement('option');
-    opt.value = c;
-    opt.textContent = c;
-    sel.appendChild(opt);
-  }});
-  if (HAS_UNKNOWN_CONSTR) {{
-    const opt = document.createElement('option');
-    opt.value = CONSTR_NONE;
-    opt.textContent = 'Без посочен вид';
-    sel.appendChild(opt);
+// ── Менюта с отметки: Район, Строителство, Бележки ────────────────────────────
+function msBoxes(id) {{
+  return Array.from(document.querySelectorAll(`#${{id}} input[type=checkbox]`));
+}}
+function msValues(id) {{
+  return msBoxes(id).filter(b => b.checked).map(b => b.value);
+}}
+function msAddOption(id, value, label) {{
+  const row = document.createElement('label');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.value = value;
+  const text = document.createElement('span');
+  text.dataset.label = label;
+  text.textContent = label;
+  row.append(box, ' ', text);
+  document.querySelector(`#${{id}} .ms-options`).appendChild(row);
+}}
+// Надпис на затвореното меню: "Всички" / избраната опция / "3 избрани"
+function msSummary(id) {{
+  const sel = msBoxes(id).filter(b => b.checked);
+  const summary = document.querySelector(`#${{id}} summary`);
+  if (!sel.length) {{
+    summary.textContent = 'Всички';
+  }} else if (sel.length === 1) {{
+    summary.textContent = sel[0].parentElement.querySelector('[data-label]').dataset.label;
+  }} else if (id === 'f-dup') {{
+    summary.textContent = `${{sel.length}} бележки (${{dupMode() === 'any' ? 'която и да е' : 'всички'}})`;
+  }} else {{
+    summary.textContent = `${{sel.length}} избрани`;
   }}
-}})();
+}}
+// Бройка до всяка опция (за избрания сайт и таб); опциите с 0 са приглушени
+function msCounts(id, rows, matches) {{
+  document.querySelectorAll(`#${{id}} [data-label]`).forEach(text => {{
+    const value = text.parentElement.querySelector('input').value;
+    const n = rows.filter(r => matches(r, value)).length;
+    text.textContent = `${{text.dataset.label}} (${{n}})`;
+    text.parentElement.classList.toggle('ms-zero', n === 0);
+  }});
+}}
+
+ALL_LOCATIONS.forEach(loc => msAddOption('f-loc', loc, loc));
+ALL_CONSTRUCTIONS.forEach(c => msAddOption('f-constr', c, c));
+if (HAS_UNKNOWN_CONSTR) msAddOption('f-constr', CONSTR_NONE, 'Без посочен вид');
+
+// Съвпада ли редът със стойност от менюто (CONSTR_NONE = сайтът не дава вид строителство)
+const locMatches = (row, v) => (row.dataset.loc || '').toLowerCase() === v.toLowerCase();
+const constrMatches = (row, v) => v === CONSTR_NONE
+  ? !(row.dataset.constr || '')
+  : (row.dataset.constr || '').toLowerCase() === v.toLowerCase();
 
 // ── Табове: сайт (горен ред) × изглед (Всички активни / Нови / Промени / Продадени) ──
 let activeSite = 'all';
@@ -2054,6 +2167,29 @@ function updateCounts() {{
     const n = Array.from(section.querySelectorAll('table.data-table tbody tr')).filter(siteOk).length;
     document.querySelectorAll(`[data-count="${{section.id}}"]`).forEach(el => el.textContent = n);
   }});
+  // Бройки в менютата с отметки — за избрания сайт и таб
+  const current = document.getElementById(activeTab);
+  const rows = current ? Array.from(current.querySelectorAll('table.data-table tbody tr')).filter(siteOk) : [];
+  msCounts('f-loc', rows, locMatches);
+  msCounts('f-constr', rows, constrMatches);
+  msCounts('f-dup', rows, (r, v) => rowTags(r).includes(v));
+}}
+
+// ── Бележки: няколко отметки; "всички избрани" (И) или "която и да е" (ИЛИ) ──
+// Етикетите на реда (data-dup): repost / also / down / prev / still
+const dupModes = Array.from(document.querySelectorAll('input[name="f-dup-mode"]'));
+
+function rowTags(row) {{
+  return (row.dataset.dup || '').split(' ').filter(Boolean);
+}}
+function dupMode() {{
+  const checked = dupModes.find(r => r.checked);
+  return checked ? checked.value : 'all';
+}}
+function dupOkFor(row, wanted, mode) {{
+  if (!wanted.length) return true;
+  const tags = rowTags(row);
+  return mode === 'any' ? wanted.some(t => tags.includes(t)) : wanted.every(t => tags.includes(t));
 }}
 
 function activate(site, tab) {{
@@ -2080,8 +2216,10 @@ viewLinks.forEach(a => a.addEventListener('click', e => {{
 
 // ── Unified filter + search ───────────────────────────────────────────────────
 function applyFilters() {{
-  const loc      = document.getElementById('f-loc').value.trim().toLowerCase();
-  const constr   = document.getElementById('f-constr').value.trim().toLowerCase();
+  const locSel    = msValues('f-loc');
+  const constrSel = msValues('f-constr');
+  const dupSel   = msValues('f-dup');
+  const dupHow   = dupMode();
   const priceMin = parseFloat(document.getElementById('f-price-min').value) || null;
   const priceMax = parseFloat(document.getElementById('f-price-max').value) || null;
   const floorMin = parseFloat(document.getElementById('f-floor-min').value) || null;
@@ -2093,7 +2231,7 @@ function applyFilters() {{
   const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
 
   // Проверяваме дали има активен филтър
-  const hasFilter = loc || constr || priceMin !== null || priceMax !== null ||
+  const hasFilter = locSel.length || constrSel.length || dupSel.length || priceMin !== null || priceMax !== null ||
                     floorMin !== null || floorMax !== null;
 
   let totalVisible = 0;
@@ -2104,15 +2242,12 @@ function applyFilters() {{
     let visibleInTab = 0;
 
     section.querySelectorAll('table.data-table tbody tr').forEach(row => {{
-      const rowLoc    = (row.dataset.loc    || '').toLowerCase();
-      const rowConstr = (row.dataset.constr || '').toLowerCase();
       const rowPrice  = parseFloat(row.dataset.price) || null;
       const rowFloor  = parseFloat(row.dataset.floor);
 
-      const locOk   = !loc      || rowLoc === loc;
-      // CONSTR_NONE хваща обявите, за които сайтът не дава вид строителство
-      const constrOk = !constr ||
-                       (constr === CONSTR_NONE ? rowConstr === '' : rowConstr === constr);
+      // Няколко отметнати квартала / вида строителство → която и да е от тях
+      const locOk    = !locSel.length || locSel.some(v => locMatches(row, v));
+      const constrOk = !constrSel.length || constrSel.some(v => constrMatches(row, v));
       const pMinOk  = priceMin === null || (rowPrice !== null && rowPrice >= priceMin);
       const pMaxOk  = priceMax === null || (rowPrice !== null && rowPrice <= priceMax);
       // партер = етаж 0, затова проверяваме за NaN, а не за 0
@@ -2121,7 +2256,9 @@ function applyFilters() {{
       // Текстово търсене само за активния таб
       const textOk  = !isActive || !q || row.textContent.toLowerCase().includes(q);
 
-      const show = siteOk(row) && locOk && constrOk && pMinOk && pMaxOk && fMinOk && fMaxOk && textOk;
+      const dupOk   = dupOkFor(row, dupSel, dupHow);
+
+      const show = siteOk(row) && locOk && constrOk && dupOk && pMinOk && pMaxOk && fMinOk && fMaxOk && textOk;
       row.style.display = show ? '' : 'none';
       if (show) visibleInTab++;
     }});
@@ -2145,16 +2282,30 @@ function applyFilters() {{
 }}
 
 // ── Filter inputs ─────────────────────────────────────────────────────────────
-['f-loc', 'f-constr', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
-  const el = document.getElementById(id);
-  el.addEventListener('input', applyFilters);
-  // Някои браузъри не пращат 'input' при избор от <select>
-  if (el.tagName === 'SELECT') el.addEventListener('change', applyFilters);
+['f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+  document.getElementById(id).addEventListener('input', applyFilters);
+}});
+['f-loc', 'f-constr', 'f-dup'].forEach(id => {{
+  document.querySelectorAll(`#${{id}} input`).forEach(el => el.addEventListener('change', () => {{
+    msSummary(id);
+    applyFilters();
+  }}));
+}});
+// Менютата с отметки се затварят при щракване извън тях
+document.addEventListener('click', e => {{
+  document.querySelectorAll('details.ms[open]').forEach(menu => {{
+    if (!menu.contains(e.target)) menu.open = false;
+  }});
 }});
 
 document.getElementById('f-reset').addEventListener('click', () => {{
-  ['f-loc', 'f-constr', 'f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
+  ['f-price-min', 'f-price-max', 'f-floor-min', 'f-floor-max'].forEach(id => {{
     document.getElementById(id).value = '';
+  }});
+  dupModes.forEach(r => r.checked = r.value === 'all');
+  ['f-loc', 'f-constr', 'f-dup'].forEach(id => {{
+    msBoxes(id).forEach(b => b.checked = false);
+    msSummary(id);
   }});
   // Изчистваме и текстовото търсене на активния таб
   const activeSection = document.getElementById(activeTab);

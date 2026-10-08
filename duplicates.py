@@ -33,6 +33,7 @@ COL_DUP_PREV = 'Dup_Prev'
 COL_DUP_ALSO = 'Dup_Also'
 COL_DUP_STILL = 'Dup_Still'
 COL_DUP_CHANGE_DATE = 'Dup_Price_Change_Date'
+COL_DUP_PREV_LOWER = 'Dup_Prev_Lower'  # по-евтина от предишната обява за същия апартамент
 
 
 # ================= ОТПЕЧАТЪЦИ =================
@@ -167,7 +168,7 @@ def annotate(df, created_col, today=None):
     """
     today = today or datetime.now().strftime("%Y-%m-%d")
     for col, default in ((COL_DUP_REPOSTED, False), (COL_DUP_PREV, ""), (COL_DUP_ALSO, ""),
-                         (COL_DUP_STILL, ""), (COL_DUP_CHANGE_DATE, "")):
+                         (COL_DUP_STILL, ""), (COL_DUP_CHANGE_DATE, ""), (COL_DUP_PREV_LOWER, False)):
         df[col] = default
     if df.empty or COL_IMAGE_HASHES not in df.columns:
         return df
@@ -223,7 +224,7 @@ def annotate(df, created_col, today=None):
 
     n = len(rows)
     out = {COL_DUP_REPOSTED: [False] * n, COL_DUP_PREV: [""] * n, COL_DUP_ALSO: [""] * n,
-           COL_DUP_STILL: [""] * n, COL_DUP_CHANGE_DATE: [""] * n}
+           COL_DUP_STILL: [""] * n, COL_DUP_CHANGE_DATE: [""] * n, COL_DUP_PREV_LOWER: [False] * n}
     for members in groups.values():
         if len(members) < 2:
             continue
@@ -262,6 +263,7 @@ def annotate(df, created_col, today=None):
                     out[COL_DUP_REPOSTED][x["i"]] = True
                 if change:
                     out[COL_DUP_CHANGE_DATE][x["i"]] = x["created"] or prev["end"]
+                    out[COL_DUP_PREV_LOWER][x["i"]] = x["first_price"] < prev["price"]
         # свалена обява, но апартаментът още се продава в друга обява
         for s in sold:
             if active:
