@@ -1087,10 +1087,10 @@ def _build_rows(df, cols):
                 if text:
                     cls = "history site-history" if from_site else "history"
                     src = "по данни от imot.bg" if from_site else "засечена от скрапера"
-                    cells.append(f'<td data-sort="{last_change}"><div class="{cls}" '
+                    cells.append(f'<td class="col-hist" data-sort="{last_change}"><div class="{cls}" '
                                  f'title="История на цената — {src}">{text}</div></td>')
                 else:
-                    cells.append('<td data-sort="">—</td>')
+                    cells.append('<td class="col-hist" data-sort="">—</td>')
 
             elif col_key == COL_SITE_PRICE_HISTORY:
                 text = str(val).strip() if pd.notna(val) else ""
@@ -1116,8 +1116,9 @@ def _build_rows(df, cols):
 def _table(df, cols, headers, css_id="", extra_class=""):
     if df.empty:
         return '<p class="empty-note">Няма данни.</p>'
+    head_class = {COL_SOURCE: "col-src", COL_HISTORY_VIEW: "col-hist"}
     thead = "<tr>" + "".join(
-        f'<th class="col-src">{h}</th>' if col == COL_SOURCE else f"<th>{h}</th>"
+        f'<th class="{head_class[col]}">{h}</th>' if col in head_class else f"<th>{h}</th>"
         for col, h in zip(cols, headers)
     ) + "</tr>"
     tbody = _build_rows(df, cols)
@@ -1655,6 +1656,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
+    text-align: center;
   }}
   table.data-table th:hover {{ color: var(--text); }}
   table.data-table th.sorted-asc::after  {{ content: ' ↑'; }}
@@ -1666,8 +1668,12 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
     vertical-align: middle;
     max-width: 280px;
     word-break: break-word;
+    text-align: center;  /* стойностите — точно под заглавията */
   }}
   table.data-table td.nowrap {{ white-space: nowrap; }}
+  /* историята е многоредов текст — чете се по-лесно подравнена вляво */
+  table.data-table th.col-hist,
+  table.data-table td.col-hist {{ text-align: left; }}
   table.data-table tr:last-child td {{ border-bottom: none; }}
   table.data-table tr:hover td {{ background: #1e2130; }}
 
