@@ -19,6 +19,7 @@ import atexit
 from pathlib import Path
 
 import agencies  # ERA, Home2U, Явлена — отделни табове в dashboard-а
+import duplicates  # един апартамент в няколко обяви — по снимките
 import secure_store  # репото е публично → данните, логът и dashboard-ът са криптирани
 
 LOG_FILE = 'imot_scraper.log'
@@ -46,10 +47,11 @@ console_handler.setLevel(logging.CRITICAL + 1 if os.environ.get("GITHUB_ACTIONS"
                          else logging.INFO)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
-# agencies.py пише в същия лог
-agencies.logger.setLevel(logging.INFO)
-agencies.logger.addHandler(file_handler)
-agencies.logger.addHandler(console_handler)
+# agencies.py и duplicates.py пишат в същия лог
+for _module_logger in (agencies.logger, duplicates.logger):
+    _module_logger.setLevel(logging.INFO)
+    _module_logger.addHandler(file_handler)
+    _module_logger.addHandler(console_handler)
 
 
 def cleanup_log(log_path: str, keep_days: int = 20) -> None:
@@ -147,11 +149,13 @@ IMOT_SOURCE, IMOT_KEY = "imot.bg", "imot"
 COL_HISTORY_VIEW = 'History_View'
 # Само за показване: "Етаж" като "4 / 11" (етаж / общо етажи)
 COL_FLOOR_VIEW = 'Floor_View'
+# Само за показване: истинската дата на публикуване (imot.bg — от номера на обявата)
+COL_AD_CREATED = 'Ad_Created_Date'
 
 # Текстови колони, които се пазят като низ (без NaN) при запис в parquet/Excel
 TEXT_COLS = (
     COL_SITE_DATE, COL_SITE_DATE_KIND, COL_FIRST_SCRAPED,
-    COL_FIRST_SEEN, COL_CONSTRUCTION,
+    COL_FIRST_SEEN, COL_CONSTRUCTION, duplicates.COL_IMAGE_HASHES,
 )
 
 # Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
@@ -474,6 +478,70 @@ def deduplicate_history(df, link_col, price_history_col):
     for col_key in df.columns:
         agg[col_key] = merge_history if col_key == price_history_col else 'last'
     return df.groupby(link_col, as_index=False).agg(agg)
+
+
+def combine_price_histories(histories):
+    """Няколко истории "220,000 € (2026-10-07) → …" → една, по дата, без повторена цена."""
+    entries = []
+    for hist in histories:
+        for m in re.finditer(r'([\d,]+)\s*€\s*\((\d{4}-\d{2}-\d{2})\)', str(hist or "")):
+            entries.append((m.group(2), int(m.group(1).replace(",", ""))))
+    result = []
+    for date_str, price in sorted(entries):
+        if not result or result[-1][1] != price:
+            result.append((date_str, price))
+    return " → ".join(format_price_history_entry(p, d) for d, p in result)
+
+
+def merge_same_ad(df):
+    """Записи с един и същ номер на обява (различен адрес) → един запис с актуалния адрес."""
+    if df.empty:
+        return df
+    numbers = df[COL_LINK].map(duplicates.ad_number)
+    dup_mask = numbers.ne("") & numbers.duplicated(keep=False)
+    if not dup_mask.any():
+        return df
+    merged = []
+    for _, grp in df[dup_mask].groupby(numbers[dup_mask]):
+        grp = grp.sort_values(COL_SCRAPED_DATE)
+        rec = grp.iloc[-1].to_dict()  # най-новият запис — с актуалния адрес и статус
+        rec[COL_PRICE_HISTORY] = combine_price_histories(grp[COL_PRICE_HISTORY])
+        for col in (COL_FIRST_SEEN, COL_FIRST_SCRAPED):
+            dates = [d for d in grp[col].fillna("").astype(str).str.strip() if d and d != "nan"]
+            if dates:
+                rec[col] = min(dates)
+        site_hists = [h for h in grp[COL_SITE_PRICE_HISTORY].fillna("").astype(str) if h.strip()]
+        if site_hists:
+            rec[COL_SITE_PRICE_HISTORY] = max(site_hists, key=len)
+        if not str(rec.get(COL_IMAGES) or "").strip():
+            rec[COL_IMAGES] = next((p for p in grp[COL_IMAGES].fillna("") if str(p).strip()), "")
+        scraper_hist = rec[COL_PRICE_HISTORY] if " → " in rec[COL_PRICE_HISTORY] else ""
+        last_change = extract_last_price_change_date(scraper_hist, rec.get(COL_SITE_PRICE_HISTORY, ""))
+        existing = rec.get(COL_LAST_PRICE_CHANGE_DATE)
+        existing = "" if existing is None or pd.isna(existing) else str(existing)
+        if last_change and last_change > existing:
+            rec[COL_LAST_PRICE_CHANGE_DATE] = last_change
+        merged.append(rec)
+    logger.info(f"Сляти записи със сменен адрес (същия номер на обява): {int(dup_mask.sum())} → {len(merged)}")
+    return pd.concat([df[~dup_mask], pd.DataFrame(merged)], ignore_index=True)
+
+
+def relink_changed_urls(df, new_links):
+    """Обява с нов адрес, но познат номер → записът в историята поема новия адрес."""
+    if df.empty:
+        return df
+    by_number = {duplicates.ad_number(link): link for link in new_links if duplicates.ad_number(link)}
+
+    def current(link):
+        new = by_number.get(duplicates.ad_number(link))
+        return new if new and new != link else link
+
+    updated = df[COL_LINK].map(current)
+    changed = int((updated != df[COL_LINK]).sum())
+    if changed:
+        logger.info(f"Обяви със сменен адрес в imot.bg (същия номер): {changed}")
+    df[COL_LINK] = updated
+    return df
 
 
 def extract_last_price_change_date(price_history: str, site_price_history: str) -> str:
@@ -982,7 +1050,11 @@ def _added_cell(row):
     source = _text(row.get(COL_SOURCE, "")) or IMOT_SOURCE
     kind = _text(row.get(COL_SITE_DATE_KIND, ""))
     site_date = _text(row.get(COL_SITE_DATE, ""))
-    if kind and site_date:
+    created = _text(row.get(COL_AD_CREATED, ""))
+    if created and source == IMOT_SOURCE:
+        edited = f"; {kind.lower()} на {site_date}" if kind and site_date and site_date != created else ""
+        title = f' title="Публикувана на {created} — по номера на обявата в imot.bg{edited}"'
+    elif kind and site_date:
         title = f' title="{kind} на {site_date} — по данни от {source}"'
     else:
         title = f' title="Дата на първо засичане от скрапера ({source} не даде дата)"'
@@ -1031,6 +1103,18 @@ def _build_rows(df, cols):
 
             if col_key == COL_LINK:
                 cells.append(f'<td class="nowrap">{_link_cell(val)}</td>')
+
+            elif col_key == COL_LOCATION:
+                # В) бележки от сравнението на снимките: качена наново / също в друга обява
+                badges = []
+                if bool(row.get(duplicates.COL_DUP_REPOSTED, False) == True):
+                    badges.append('<span class="dup dup-repost" title="Апартаментът е бил свален '
+                                  'и качен наново като нова обява">⟳ качена наново</span>')
+                for dup_col in (duplicates.COL_DUP_ALSO, duplicates.COL_DUP_STILL):
+                    if _text(row.get(dup_col, "")):
+                        badges.append(_text(row.get(dup_col, "")))
+                extra = f'<div class="dup-badges">{"".join(badges)}</div>' if badges else ""
+                cells.append(f'<td data-sort="{_attr(loc_val)}">{loc_val or "—"}{extra}</td>')
 
             elif col_key == COL_SOURCE:
                 name = _text(val) or IMOT_SOURCE
@@ -1084,11 +1168,16 @@ def _build_rows(df, cols):
 
             elif col_key == COL_HISTORY_VIEW:
                 text, from_site, last_change = merged_history(row)
+                # В) цената в предишната (свалена) обява за същия апартамент
+                prev = _text(row.get(duplicates.COL_DUP_PREV, ""))
+                last_change = max(last_change, _text(row.get(duplicates.COL_DUP_CHANGE_DATE, "")))
                 if text:
                     cls = "history site-history" if from_site else "history"
                     src = "по данни от imot.bg" if from_site else "засечена от скрапера"
-                    cells.append(f'<td class="col-hist" data-sort="{last_change}"><div class="{cls}" '
+                    cells.append(f'<td class="col-hist" data-sort="{last_change}">{prev}<div class="{cls}" '
                                  f'title="История на цената — {src}">{text}</div></td>')
+                elif prev:
+                    cells.append(f'<td class="col-hist" data-sort="{last_change}">{prev}</td>')
                 else:
                     cells.append('<td class="col-hist" data-sort="">—</td>')
 
@@ -1142,7 +1231,16 @@ def _combine_sites(df_imot, agency_results):
     for col in (COL_LOCATION, COL_CONSTRUCTION, COL_FIRST_SEEN, COL_SCRAPED_DATE, COL_SITE_DATE,
                 COL_PRICE_HISTORY, COL_SITE_PRICE_HISTORY, COL_LAST_PRICE_CHANGE_DATE):
         df[col] = df[col].fillna("").astype(str) if col in df.columns else ""
-    return df
+
+    # Б) "Добавена" = истинската дата на публикуване: при imot.bg първите 10 цифри от
+    # номера на обявата са моментът на създаване; при агенциите — датата в обявата
+    is_imot = df[COL_SOURCE_KEY] == IMOT_KEY
+    df[COL_AD_CREATED] = df[COL_LINK].map(duplicates.imot_created_date).where(is_imot, df[COL_SITE_DATE])
+    df.loc[is_imot & (df[COL_AD_CREATED] != ""), COL_FIRST_SEEN] = df[COL_AD_CREATED]
+    df[COL_AGE_DAYS] = pd.array([days_since(v) for v in df[COL_FIRST_SEEN]], dtype="Int64")
+
+    # В) един апартамент в няколко обяви (по снимките): качена наново / също в друга обява
+    return duplicates.annotate(df, COL_AD_CREATED)
 
 
 def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
@@ -1158,6 +1256,10 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
         cutoff_30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
 
         def _in_last_30(row):
+            # Качена наново с друга цена (по снимките) — също е промяна в цената
+            repost_chg = str(row.get(duplicates.COL_DUP_CHANGE_DATE, "") or "").strip()
+            if repost_chg and repost_chg >= cutoff_30:
+                return True
             last_chg = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
             price_hist = str(row.get(COL_PRICE_HISTORY, "") or "")
             site_hist = str(row.get(COL_SITE_PRICE_HISTORY, "") or "")
@@ -1174,13 +1276,11 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
         df_changed_all = df_active[mask_changed].copy()
 
         def _last_chg_sort(row):
-            d = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip()
-            if d:
-                return d
-            return extract_last_price_change_date(
+            d = str(row.get(COL_LAST_PRICE_CHANGE_DATE, "") or "").strip() or extract_last_price_change_date(
                 row.get(COL_PRICE_HISTORY, ""),
                 row.get(COL_SITE_PRICE_HISTORY, ""),
             )
+            return max(d, str(row.get(duplicates.COL_DUP_CHANGE_DATE, "") or ""))
         if not df_changed_all.empty:
             df_changed_all["_sort_date"] = df_changed_all.apply(_last_chg_sort, axis=1)
             df_changed_all = df_changed_all.sort_values("_sort_date", ascending=False).drop(columns=["_sort_date"])
@@ -1208,6 +1308,8 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
             )
         else:
             has_site_date = pd.Series(False, index=df_active.index)
+        if COL_AD_CREATED in df_active.columns:
+            has_site_date = has_site_date | (df_active[COL_AD_CREATED].fillna("").astype(str) != "")
         mask_not_bulk = (~is_bulk) | has_site_date
         df_recent = df_active[mask_recent & mask_not_bulk].copy()
         df_recent = df_recent.sort_values(COL_FIRST_SEEN, ascending=False)
@@ -1721,6 +1823,25 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
     white-space: nowrap;
   }}
   .price-down {{ color: var(--green) !important; font-weight: 600; }}
+  /* В) бележки от сравнението на снимките */
+  .dup-badges {{ margin-top: 5px; display: flex; flex-direction: column; align-items: center; gap: 3px; }}
+  .dup {{
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }}
+  .dup-repost {{ background: rgba(245, 158, 11, .15); color: var(--orange); }}
+  table.data-table a.dup-also,
+  table.data-table a.dup-still {{ background: rgba(79, 156, 249, .12); color: var(--accent); font-size: 10px; }}
+  .dup-prev {{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }}
   .price-up {{ color: var(--red) !important; font-weight: 600; }}
 
   /* thumbnail images */
@@ -1845,7 +1966,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
 
   <section id="recent">
     <h2>Нови обяви <span class="badge" data-count="recent">{n_recent}</span></h2>
-    <p class="section-desc">Обяви с дата от сайта (Коригирана/Публикувана) през последните {RECENT_DAYS} дни; ако сайтът не дава дата — по първото засичане.</p>
+    <p class="section-desc">Обяви, публикувани през последните {RECENT_DAYS} дни (imot.bg — по номера на обявата); ако сайтът не дава дата — по първото засичане.</p>
     <div class="search-wrap">
       <input type="text" id="recent-search" placeholder="Търси…" oninput="applyFilters()">
     </div>
@@ -2258,6 +2379,12 @@ if not df_history.empty:
         axis=1,
     )
 
+    # Една обява = един номер: imot.bg понякога сменя адреса ѝ (маха улицата,
+    # сменя вида тристаен → четиристаен), а номерът остава. Иначе излиза
+    # "продадена" + "нова" и историята на цената се губи.
+    df_history = merge_same_ad(df_history)
+    df_history = relink_changed_urls(df_history, df_new[COL_LINK])
+
 df_all = df_history.copy()
 if not df_all.empty:
     df_all = df_all.set_index(COL_LINK, drop=False)
@@ -2445,6 +2572,8 @@ logger.info(
     f"Sold: {len(df_sold_now)}  |  Total unique: {len(df_all)}"
 )
 
+# Отпечатъци на снимките (веднъж за обява) — за откриване на дублирани/качени наново обяви
+df_all = duplicates.fill_image_hashes(df_all, COL_IMAGES, duplicates.local_reader(HTML_OUTPUT.parent))
 secure_store.write_parquet(df_all, HISTORY_FILE)
 df_all.to_csv("all_listings_history.csv", index=False, encoding='utf-8-sig')
 

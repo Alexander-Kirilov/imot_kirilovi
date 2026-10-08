@@ -23,6 +23,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+import duplicates
 import secure_store
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ TEXT_COLS = (
     COL_LINK, COL_TITLE, COL_LOCATION, COL_CONSTRUCTION, COL_IMAGES, COL_SCRAPED_DATE,
     COL_FIRST_SEEN, COL_FIRST_SCRAPED, COL_SITE_DATE, COL_SITE_DATE_KIND,
     COL_PRICE_HISTORY, COL_LAST_PRICE_CHANGE_DATE, COL_SOURCE, COL_SOURCE_KEY,
+    duplicates.COL_IMAGE_HASHES,
 )
 
 # Ако в един run се появят повече нови от толкова → смятаме ги за първоначално
@@ -622,6 +624,8 @@ def run_agency(agency, today):
         return res
 
     df_all, new, changed, sold, bulk = update_history(agency, scraped, today)
+    # Отпечатъци на снимките (само за обявите без тях) — за откриване на дубликати
+    df_all = duplicates.fill_image_hashes(df_all, COL_IMAGES, duplicates.url_reader(_session()))
     res.update(df=df_all, new=new, changed=changed, sold=sold, fetched=len(scraped), bulk=bulk)
 
     AGENCY_DIR.mkdir(exist_ok=True)
