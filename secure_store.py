@@ -125,7 +125,8 @@ LOGIN_PAGE = """<!DOCTYPE html>
   :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e2e4f0;
           --muted: #7a7d9a; --accent: #4f9cf9; --red: #f43f5e; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  /* само за страницата за вход — не бива да важи за таблото след разкриптиране */
+  body.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center;
          padding: 16px; background: var(--bg); color: var(--text);
          font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; }
   form { width: 100%; max-width: 360px; padding: 28px; background: var(--surface);
@@ -145,7 +146,7 @@ LOGIN_PAGE = """<!DOCTYPE html>
   .err { color: var(--red); font-size: 12px; margin-top: 12px; min-height: 16px; }
 </style>
 </head>
-<body>
+<body class="login-page">
 <form id="login" hidden>
   <h1>🏠 Имоти · <span>сем. Кирилови</span></h1>
   <p>Достъпът е само за семейството.</p>
@@ -178,7 +179,14 @@ async function decryptPage(rawKey) {
   return new TextDecoder().decode(plain);
 }
 
-function showDashboard(html) {
+async function showDashboard(html) {
+  // Докато браузърът още чете тази страница ("Запомни ме" разкриптира веднага),
+  // document.open() не прави нищо и таблото се долепя към страницата за вход →
+  // изчакваме я да се зареди докрай
+  if (document.readyState === 'loading') {
+    await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
   document.open();
   document.write(html);
   document.close();
@@ -213,7 +221,7 @@ function storage(action, value) {
       const rawKey = await deriveKey(document.getElementById('pw').value);
       const html = await decryptPage(rawKey);
       if (document.getElementById('remember').checked) storage('set', toB64(rawKey));
-      showDashboard(html);
+      await showDashboard(html);
     } catch (ex) {
       err.textContent = window.crypto && crypto.subtle ? 'Грешна парола.' : 'Браузърът не поддържа разкриптиране.';
       btn.disabled = false;
