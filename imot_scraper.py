@@ -82,9 +82,17 @@ def cleanup_log(log_path: str, keep_days: int = 20) -> None:
         logger.warning(f"Log cleanup failed: {_log_err}")
 
 
+def progress(msg):
+    """Етап/бройки — без адреси и цени, затова се показва и в публичния лог на GitHub Actions."""
+    logger.info(msg)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"[прогрес] {datetime.now():%H:%M:%S} {msg}", flush=True)
+
+
 cleanup_log(LOG_FILE, keep_days=20)
 
 logger.info("=== Starting imot.bg scraper ===")
+progress("Старт на обновяването")
 
 # ================= PATHS & CONFIG =================
 HISTORY_FILE = "all_listings_history.parquet"
@@ -160,6 +168,10 @@ TEXT_COLS = (
 
 # Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
 BULK_IMPORT_THRESHOLD = 5
+
+# Лимити срещу увисване (GitHub прекъсва стъпката след 80 мин)
+PAGE_LOAD_TIMEOUT_SEC = 45   # една страница в Chrome (Selenium) — по подразбиране е 5 мин
+DETAIL_BUDGET_MIN = 55       # детайлите на imot.bg общо; след това — с каквото има
 
 # Колко дни назад обхваща табът "Нови" в dashboard-а
 RECENT_DAYS = 10
@@ -796,6 +808,7 @@ def scrape_site_price_histories_selenium(links):
         options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
         driver = webdriver.Chrome(options=options)
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SEC)
         wait = WebDriverWait(driver, 10)
     except Exception as selenium_err:
         logger.error(f"Selenium failed: {selenium_err}")
@@ -811,7 +824,16 @@ def scrape_site_price_histories_selenium(links):
 
     good_listings = 0
 
+    started = time.time()
     for idx, url in enumerate(links, start=1):
+        elapsed_min = (time.time() - started) / 60
+        if elapsed_min > DETAIL_BUDGET_MIN:
+            # Останалите обяви запазват предишните си данни (история, снимки, дата)
+            logger.warning(f"Лимитът за детайлите ({DETAIL_BUDGET_MIN} мин) изтече на {idx - 1}/{total}")
+            progress(f"[imot.bg] детайли: лимитът от {DETAIL_BUDGET_MIN} мин изтече на {idx - 1}/{total}")
+            break
+        if idx % 10 == 1 or idx == total:
+            progress(f"[imot.bg] детайли {idx}/{total} · {elapsed_min:.0f} мин")
         logger.info(f"[{idx}/{total}] {url}")
 
         # ================= PRICE HISTORY =================
@@ -903,6 +925,7 @@ def scrape_site_price_histories_selenium(links):
                         pass
                     try:
                         driver = webdriver.Chrome(options=options)
+                        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SEC)
                         wait = WebDriverWait(driver, 10)
                         logger.info("  ✔ Selenium driver restarted")
                     except Exception as restart_err:
@@ -2439,7 +2462,10 @@ with sync_playwright() as p:
 
 # ================= ДРУГИ АГЕНЦИИ (ERA, Home2U, Явлена) =================
 # Не хвърля грешка: ако някой сайт пропадне, табът му показва предишните данни
+progress(f"[imot.bg] списък: {len(listings)} обяви")
 agency_results = agencies.run_all(TODAY)
+progress("[агенции] " + " · ".join(
+    f"{r['name']}: {r['fetched']}" + (" ⚠ неуспешно" if r["error"] else "") for r in agency_results))
 
 # ================= PROCESSING =================
 if not listings:
@@ -2455,6 +2481,7 @@ df_new = pd.DataFrame(listings)
 df_sold_now = pd.DataFrame()
 
 selenium_results = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist())
+progress("[imot.bg] детайлите са готови")
 df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("price_history", "")
 )
@@ -2729,6 +2756,7 @@ secure_store.write_parquet(df_all, HISTORY_FILE)
 df_all.to_csv("all_listings_history.csv", index=False, encoding='utf-8-sig')
 
 # ================= GENERATE HTML DASHBOARD =================
+progress("Обработката е готова — генерирам сайта")
 generate_html(df_all, NOW_STR, agency_results)
 
 # ================= EXCEL EXPORT =================
@@ -2800,6 +2828,7 @@ except Exception as e:
     logger.error(f"Excel formatting error: {e}")
 
 logger.info(f"Excel saved: {excel_file}")
+progress("Сайтът и Excel са готови")
 
 # ================= EMAIL =================
 if len(df_new_only) > 0 or len(df_changed) > 0 or len(df_sold_now) > 0 \
@@ -3022,3 +3051,4 @@ else:
     logger.info("No changes → email not sent")
 
 logger.info("=== Script finished ===")
+progress("Край")

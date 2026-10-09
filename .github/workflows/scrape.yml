@@ -86,6 +86,8 @@ jobs:
  
 #      # === Run Scraper ===
       - name: Run scraper
+        # по-малко от лимита на целия job (90), за да остане време логът да се запази
+        timeout-minutes: 80
         env:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BASE_URL: ${{ secrets.BASE_URL }}
@@ -99,6 +101,23 @@ jobs:
           YAVLENA_URL: ${{ secrets.YAVLENA_URL }}
         run: |
           python imot_scraper.py
+
+      # === Лог при прекъсване/грешка: криптира го и качва САМО лога (без недовършени данни) ===
+      - name: Save log on failure
+        if: failure() || cancelled()
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          python -c "import secure_store; secure_store.seal_file('imot_scraper.log')"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add imot_scraper.log.enc
+          if git diff --staged --quiet; then
+            echo "No log changes"
+          else
+            git commit -m "Лог от прекъснато обновяване: $(date +'%d.%m.%Y %H:%M %Z')"
+            git pull --rebase && git push
+          fi
 
       # === Debug ===
       - name: Debug - check files
