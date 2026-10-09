@@ -102,7 +102,6 @@ jobs:
           HOMES_URL: ${{ secrets.HOMES_URL }}
           IMOTINET_SEARCH: ${{ secrets.IMOTINET_SEARCH }}
           IRIDA_URL: ${{ secrets.IRIDA_URL }}
-          IMOTIINFO_URL: ${{ secrets.IMOTIINFO_URL }}
         run: |
           python imot_scraper.py
 

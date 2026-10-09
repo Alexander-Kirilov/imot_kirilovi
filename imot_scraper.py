@@ -1617,7 +1617,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
   nav.site-nav a.site-btn-homes     {{ --site: #a78bfa; }}
   nav.site-nav a.site-btn-imotinet  {{ --site: #22d3ee; }}
   nav.site-nav a.site-btn-irida     {{ --site: #f472b6; }}
-  nav.site-nav a.site-btn-imotiinfo {{ --site: #84cc16; }}
   nav.site-nav a.site-btn:hover {{ border-color: var(--site); }}
   nav.site-nav a.site-btn.active {{
     color: var(--site);
@@ -1653,7 +1652,6 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
   .src-homes     {{ background: rgba(167, 139, 250, .16); color: #a78bfa; }}
   .src-imotinet  {{ background: rgba(34, 211, 238, .14);  color: #22d3ee; }}
   .src-irida     {{ background: rgba(244, 114, 182, .14); color: #f472b6; }}
-  .src-imotiinfo {{ background: rgba(132, 204, 22, .14);  color: #84cc16; }}
   /* когато е избран един сайт, колоната "Сайт" е излишна */
   main.one-site .col-src {{ display: none; }}
 
@@ -2479,8 +2477,23 @@ with sync_playwright() as p:
 # Не хвърля грешка: ако някой сайт пропадне, табът му показва предишните данни
 progress(f"[imot.bg] списък: {len(listings)} обяви")
 agency_results = agencies.run_all(TODAY, deadline=SCRIPT_START + AGENCIES_DEADLINE_MIN * 60)
+def short_reason(error):
+    """Кратка причина за публичния лог — без адреси (в тях е търсенето)."""
+    err = str(error or "")
+    m = re.match(r"(\d{3}) (?:Client|Server) Error", err)
+    if m:
+        return f"HTTP {m.group(1)}"
+    for marker, text in (("timed out", "timeout"), ("Connection", "няма връзка"),
+                         ("времето", "времето изтече"), ("не са намерени", "0 обяви"),
+                         ("не е зададен", "няма адрес за търсене")):
+        if marker in err:
+            return text
+    return "грешка"
+
+
 progress("[агенции] " + " · ".join(
-    f"{r['name']}: {r['fetched']}" + (" ⚠ неуспешно" if r["error"] else "") for r in agency_results))
+    f"{r['name']}: {r['fetched']}" + (f" ⚠ {short_reason(r['error'])}" if r["error"] else "")
+    for r in agency_results))
 
 # ================= PROCESSING =================
 if not listings:

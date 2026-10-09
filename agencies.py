@@ -788,67 +788,6 @@ def fetch_irida():
     return list(by_link.values())
 
 
-# ================= IMOTI.INFO =================
-# robots.txt на imoti.info забранява AI роботите (вкл. Claude), но не и останалите —
-# скрейпърът тегли сайта, а кодът е писан по страници, запазени ръчно (Ctrl+S).
-# Сайтът препубликува обяви от imot.bg (снимките са от сървъра на imot.bg), но за
-# целия Младост 1–4. Картата има всичко: "86 кв.м, 1980 г., ЕПК, 14-ти ет." —
-# детайли не са нужни. IMOTIINFO_URL е адресът на търсенето; страниците са /page-N.
-
-IMOTIINFO_URL = os.environ.get("IMOTIINFO_URL", "")
-IMOTIINFO = "https://imoti.info"
-
-
-def _imotiinfo_cards(html, page_url):
-    soup = BeautifulSoup(html, "html.parser")
-    cards = []
-    for item in soup.select("div.item"):
-        a = item.find("a", href=re.compile(r"/obiava/\d+"))
-        if not a:
-            continue
-        parts = [p.strip() for p in item.get_text("|", strip=True).split("|") if p.strip()]
-        price = parts[parts.index("€") - 1] if "€" in parts and parts.index("€") > 0 else ""
-        specs = next((p for p in parts if re.search(r'кв\.?\s*м', p)), "")  # "86 кв.м, 1980 г., ЕПК, 14-ти ет."
-        m_size = re.search(r'(\d+(?:[.,]\d+)?)\s*кв\.?\s*м', specs)
-        m_year = re.search(r'(\d{4})\s*г\.', specs)
-        m_floor = re.search(r'(\d+)-?(?:ви|ри|ти|ми)?\s*ет\.|(партер)', specs)
-        img = item.find("img")
-        src = (img.get("srcset") or img.get("data-src") or img.get("src") or "").split()[0] if img else ""
-        cards.append(_listing(urljoin(IMOTIINFO, re.sub(r'[?#].*$', '', a["href"])), **{
-            COL_TITLE: next((p for p in parts if " в " in p and "стаен" in p), ""),
-            COL_LOCATION: next((p for p in parts if p.startswith("град София") or p.startswith("София")), ""),
-            COL_PRICE: _price(price),
-            COL_SIZE: _area(m_size.group(1)) if m_size else None,
-            COL_YEAR: int(m_year.group(1)) if m_year else None,
-            COL_CONSTRUCTION: _construction_word(specs),
-            COL_FLOOR: (0 if m_floor.group(2) else _int(m_floor.group(1))) if m_floor else None,
-            COL_IMAGES: urljoin("https:", src) if src.startswith("//") else urljoin(page_url, src) if src else "",
-        }))
-    return cards, soup
-
-
-def fetch_imotiinfo():
-    s = _session()
-    cards, soup = _imotiinfo_cards(_get(s, IMOTIINFO_URL).text, IMOTIINFO_URL)
-    last = max([int(n) for n in re.findall(r'/page-(\d+)', " ".join(a["href"] for a in soup.find_all("a", href=True)))]
-               or [1])
-    path, _, query = IMOTIINFO_URL.partition("?")
-    for page in range(2, min(last, 80) + 1):
-        if _time_up(partial=True):
-            break
-        _pause()
-        more, more_soup = _imotiinfo_cards(_get(s, f"{path.rstrip('/')}/page-{page}?{query}").text, IMOTIINFO_URL)
-        if not more:
-            break
-        cards += more
-        # бутонът "Напред" показва само няколко страници напред → разширяваме, докато има
-        last = max([last] + [int(n) for n in re.findall(r'/page-(\d+)', " ".join(
-            x["href"] for x in more_soup.find_all("a", href=True)))])
-    by_link = {c[COL_LINK]: c for c in cards if c[COL_LOCATION] in MLADOST}
-    logger.info(f"[imoti.info] Страници: {last} | карти: {len(cards)} | в Младост 1–4: {len(by_link)}")
-    return list(by_link.values())
-
-
 # ================= РЕГИСТЪР =================
 
 AGENCIES = [
@@ -864,8 +803,6 @@ AGENCIES = [
      f"{IMOTINET}/bg/obiavi/r/prodava/sofia/", "secret": "IMOTINET_SEARCH", "fetch": fetch_imotinet},
     {"key": "irida", "name": "Ирида", "site": "irida.bg", "url": IRIDA_URL,
      "secret": "IRIDA_URL", "fetch": fetch_irida},
-    {"key": "imotiinfo", "name": "imoti.info", "site": "imoti.info", "url": IMOTIINFO_URL,
-     "secret": "IMOTIINFO_URL", "fetch": fetch_imotiinfo},
 ]
 
 
