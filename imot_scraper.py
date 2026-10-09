@@ -18,6 +18,8 @@ import os
 import atexit
 from pathlib import Path
 
+SCRIPT_START = time.time()
+
 import agencies  # ERA, Home2U, Явлена — отделни табове в dashboard-а
 import duplicates  # един апартамент в няколко обяви — по снимките
 import secure_store  # репото е публично → данните, логът и dashboard-ът са криптирани
@@ -172,6 +174,8 @@ BULK_IMPORT_THRESHOLD = 5
 # Лимити срещу увисване (GitHub прекъсва стъпката след 80 мин)
 PAGE_LOAD_TIMEOUT_SEC = 45   # една страница в Chrome (Selenium) — по подразбиране е 5 мин
 DETAIL_BUDGET_MIN = 55       # детайлите на imot.bg общо; след това — с каквото има
+RUN_BUDGET_MIN = 100         # целият скрипт (GitHub спира стъпката на 110-ата минута)
+AGENCIES_DEADLINE_MIN = 45   # другите сайтове приключват до тази минута от старта
 
 # Колко дни назад обхваща табът "Нови" в dashboard-а
 RECENT_DAYS = 10
@@ -827,7 +831,8 @@ def scrape_site_price_histories_selenium(links):
     started = time.time()
     for idx, url in enumerate(links, start=1):
         elapsed_min = (time.time() - started) / 60
-        if elapsed_min > DETAIL_BUDGET_MIN:
+        run_min = (time.time() - SCRIPT_START) / 60
+        if elapsed_min > DETAIL_BUDGET_MIN or run_min > RUN_BUDGET_MIN - 5:
             # Останалите обяви запазват предишните си данни (история, снимки, дата)
             logger.warning(f"Лимитът за детайлите ({DETAIL_BUDGET_MIN} мин) изтече на {idx - 1}/{total}")
             progress(f"[imot.bg] детайли: лимитът от {DETAIL_BUDGET_MIN} мин изтече на {idx - 1}/{total}")
@@ -2473,7 +2478,7 @@ with sync_playwright() as p:
 # ================= ДРУГИ АГЕНЦИИ (ERA, Home2U, Явлена) =================
 # Не хвърля грешка: ако някой сайт пропадне, табът му показва предишните данни
 progress(f"[imot.bg] списък: {len(listings)} обяви")
-agency_results = agencies.run_all(TODAY)
+agency_results = agencies.run_all(TODAY, deadline=SCRIPT_START + AGENCIES_DEADLINE_MIN * 60)
 progress("[агенции] " + " · ".join(
     f"{r['name']}: {r['fetched']}" + (" ⚠ неуспешно" if r["error"] else "") for r in agency_results))
 

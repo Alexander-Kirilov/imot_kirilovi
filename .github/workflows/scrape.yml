@@ -21,7 +21,7 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     permissions:
       contents: write
@@ -86,8 +86,8 @@ jobs:
  
 #      # === Run Scraper ===
       - name: Run scraper
-        # по-малко от лимита на целия job (90), за да остане време логът да се запази
-        timeout-minutes: 80
+        # по-малко от лимита на целия job (120), за да остане време логът да се запази
+        timeout-minutes: 110
         env:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BASE_URL: ${{ secrets.BASE_URL }}

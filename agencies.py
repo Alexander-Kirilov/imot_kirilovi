@@ -186,6 +186,31 @@ def _listing(link, **fields):
     return row
 
 
+# ================= ЛИМИТ НА ВРЕМЕТО =================
+# Всеки сайт има AGENCY_BUDGET_MIN минути (и общ краен срок от imot_scraper.py).
+# Ако изтекат по време на детайлите → останалите обяви запазват предишните си данни;
+# ако изтекат по време на страниците → списъкът е непълен и липсващите обяви НЕ се
+# маркират като свалени.
+
+AGENCY_BUDGET_MIN = 15  # най-бавното първо зареждане (imoti.net, 250 детайла) е ~13 мин
+_budget = {"end": None, "partial": False, "warned": False}
+
+
+class TimeUp(Exception):
+    """Времето за текущия сайт изтече."""
+
+
+def _time_up(partial=False):
+    if _budget["end"] is None or time.time() < _budget["end"]:
+        return False
+    if partial:
+        _budget["partial"] = True
+    if not _budget["warned"]:
+        logger.warning("Времето за сайта изтече — продължавам с наличното")
+        _budget["warned"] = True
+    return True
+
+
 # ================= ERA =================
 # Сайтът на ERA е преправен (2026) — обявите идват от JSON API-то, което ползва
 # и самият сайт. URL параметрите от браузъра се превеждат 1:1 към тялото на заявката.
@@ -249,7 +274,7 @@ def fetch_era():
     logger.info(f"[ERA] Общо обяви по филтъра: {total}")
 
     offers, page = {}, 1
-    while len(offers) < total and page <= 50:
+    while len(offers) < total and page <= 50 and not _time_up(partial=True):
         r = s.post(f"{ERA_API}/offers", json={**body, "page": page}, timeout=30)
         r.raise_for_status()
         chunk = r.json().get("offers") or []
@@ -283,6 +308,8 @@ def fetch_era():
 
         # Етаж, година и строителство има само в детайла
         try:
+            if _time_up():
+                raise TimeUp()
             d = _get(s, f"{ERA_API}/offers/{number}").json()
             d = d.get("offer", d)
             row[COL_FLOOR] = _int(d.get("floor"))
@@ -291,6 +318,8 @@ def fetch_era():
             ct = _int(d.get("constructionType"))
             row[COL_CONSTRUCTION] = constr_names.get(ct, "") if ct else ""
             _pause()
+        except TimeUp:
+            pass
         except Exception as det_err:
             logger.warning(f"[ERA] Детайлът на {number} не се зареди: {det_err}")
 
@@ -337,7 +366,8 @@ def _home2u_card(article):
 def fetch_home2u():
     s = _session()
     queue, pages_seen, page_url = [], set(), HOME2U_URL
-    while page_url and page_url not in pages_seen and len(pages_seen) < 20:
+    while page_url and page_url not in pages_seen and len(pages_seen) < 20 \
+            and not _time_up(partial=True):
         pages_seen.add(page_url)
         soup = _soup(s, page_url)
         for art in soup.select("article.article-catalog"):
@@ -354,6 +384,9 @@ def fetch_home2u():
         if url in visited:
             continue
         visited.add(url)
+        if _time_up():
+            result.append(_listing(url, **pre))  # без детайла — само данните от списъка
+            continue
         try:
             soup = _soup(s, url)
         except Exception as det_err:
@@ -483,10 +516,13 @@ def fetch_yavlena():
     result = []
     for idx, (url, card_title) in enumerate(cards.items(), start=1):
         try:
+            if _time_up():
+                raise TimeUp()
             fields = _yavlena_detail(_get(s, url).text, card_title)
             _pause()
         except Exception as det_err:
-            logger.warning(f"[Явлена] {url} не се зареди ({det_err}) → само данните от списъка")
+            if not isinstance(det_err, TimeUp):
+                logger.warning(f"[Явлена] {url} не се зареди ({det_err}) → само данните от списъка")
             parts = [p.strip() for p in card_title.split(",")]
             fields = {COL_LOCATION: parts[2] if len(parts) > 2 else ""}
         row = _listing(url, **fields)
@@ -499,10 +535,18 @@ def fetch_yavlena():
 # ================= ДЕТАЙЛИ САМО ЗА НОВИ ОБЯВИ =================
 # При големите сайтове (стотици обяви) етажът/строителството се теглят веднъж —
 # за обява, която вече е в историята, update_history пази предишните стойности.
+# "Позната" е обява с вече изтеглени детайли — ако едно обновяване не смогне
+# (лимит на времето), следващото довършва останалите.
 
-def _known_links(key):
+def _known_links(key, detail_cols):
     hist = load_history(key)
-    return set(hist[COL_LINK]) if not hist.empty and COL_LINK in hist.columns else set()
+    if hist.empty or COL_LINK not in hist.columns:
+        return set()
+    have = pd.Series(False, index=hist.index)
+    for col in detail_cols:
+        if col in hist.columns:
+            have |= hist[col].map(lambda v: not _is_missing(v))
+    return set(hist.loc[have, COL_LINK])
 
 
 CONSTRUCTION_WORDS = ("Тухла", "Панел", "ЕПК", "ПК", "Гредоред", "Монолит", "Сглобяема")
@@ -538,7 +582,7 @@ def fetch_homes():
     s.headers.update({"Accept": "application/json", "Referer": "https://www.homes.bg/"})
     query = urlsplit(HOMES_URL).query
     offers, start, total = {}, 0, None
-    while start < 3000:
+    while start < 3000 and not _time_up(partial=True):
         d = _get(s, f"{HOMES_API}offers?{query}&startIndex={start}&stopIndex={start + 99}").json()
         total = d.get("offersCount", total)
         chunk = d.get("result") or []
@@ -550,7 +594,7 @@ def fetch_homes():
         _pause()
     logger.info(f"[homes.bg] Обяви по филтъра: {total} | изтеглени: {len(offers)}")
 
-    known = _known_links("homes")
+    known = _known_links("homes", (COL_FLOOR, COL_TOTAL_FLOORS))
     result, details = [], 0
     for o in offers.values():
         link = urljoin("https://www.homes.bg", o.get("viewHref") or "")
@@ -565,7 +609,7 @@ def fetch_homes():
             COL_CONSTRUCTION: _construction_word(o.get("description")),  # "Панел, Обзаведен, ТЕЦ"
             COL_IMAGES: ",".join(u for u in (_homes_photo(ph) for ph in photos[:2]) if u),
         })
-        if link not in known:
+        if link not in known and not _time_up():
             try:
                 attrs = {a.get("key"): a.get("value") for a in
                          _get(s, f"{HOMES_API}offers/{o.get('type')}/{o.get('id')}").json()
@@ -635,6 +679,8 @@ def fetch_imotinet():
     cards, soup = _imotinet_cards(r.text)
     last_page = max([int(n) for n in re.findall(r'[?&]page=(\d+)&(?:amp;)?sid=' + re.escape(sid), r.text)] or [1])
     for page in range(2, min(last_page, 40) + 1):
+        if _time_up(partial=True):
+            break
         _pause()
         more, _ = _imotinet_cards(_get(s, f"{base}?page={page}&sid={sid}").text)
         if not more:
@@ -644,9 +690,9 @@ def fetch_imotinet():
     logger.info(f"[imoti.net] Страници: {last_page} | обяви: {len(by_link)}")
 
     # Строителството е само в детайла → теглим го за обявите, които още не познаваме
-    known, details = _known_links("imotinet"), 0
+    known, details = _known_links("imotinet", (COL_CONSTRUCTION, COL_YEAR)), 0
     for link, row in by_link.items():
-        if link in known:
+        if link in known or _time_up():
             continue
         try:
             text = BeautifulSoup(_get(s, link).text, "html.parser").get_text("\n", strip=True)
@@ -717,6 +763,8 @@ def fetch_irida():
     cards, soup = _irida_cards(_get(s, IRIDA_URL).text, IRIDA_URL)
     pages = [int(n) for n in re.findall(r'[?&]page=(\d+)', " ".join(a["href"] for a in soup.find_all("a", href=True)))]
     for page in range(2, min(max(pages or [1]), 30) + 1):
+        if _time_up(partial=True):
+            break
         _pause()
         more, _ = _irida_cards(_get(s, f"{IRIDA_URL}{sep}page={page}").text, IRIDA_URL)
         if not more:
@@ -726,9 +774,9 @@ def fetch_irida():
     by_link = {c[COL_LINK]: c for c in cards if c[COL_LOCATION] in MLADOST}
     logger.info(f"[Ирида] Страници: {max(pages or [1])} | карти: {len(cards)} | в Младост 1–4: {len(by_link)}")
 
-    known, details = _known_links("irida"), 0
+    known, details = _known_links("irida", (COL_FLOOR, COL_CONSTRUCTION, COL_YEAR)), 0
     for link, row in by_link.items():
-        if link in known:
+        if link in known or _time_up():
             continue
         try:
             row.update({k: v for k, v in _irida_detail(_get(s, link).text).items() if not _is_missing(v)})
@@ -786,6 +834,8 @@ def fetch_imotiinfo():
                or [1])
     path, _, query = IMOTIINFO_URL.partition("?")
     for page in range(2, min(last, 80) + 1):
+        if _time_up(partial=True):
+            break
         _pause()
         more, more_soup = _imotiinfo_cards(_get(s, f"{path.rstrip('/')}/page-{page}?{query}").text, IMOTIINFO_URL)
         if not more:
@@ -857,7 +907,7 @@ def finalize(df, agency):
     return df.drop_duplicates(subset=[COL_LINK], keep="last").reset_index(drop=True)
 
 
-def update_history(agency, scraped, today):
+def update_history(agency, scraped, today, mark_sold=True):
     """Слива изтеглените обяви с историята. Връща (df_all, new, changed, sold, bulk)."""
     hist = load_history(agency["key"])
     records = {r[COL_LINK]: r for r in hist.to_dict("records")} if not hist.empty else {}
@@ -899,7 +949,7 @@ def update_history(agency, scraped, today):
         records[link] = rec
 
     for link, rec in records.items():
-        if link not in seen and not rec.get(COL_SOLD):
+        if mark_sold and link not in seen and not rec.get(COL_SOLD):
             rec[COL_SOLD] = True
             sold_rows.append(dict(rec))
 
@@ -913,7 +963,7 @@ def update_history(agency, scraped, today):
     return df_all, to_df(new_rows), to_df(changed_rows), to_df(sold_rows), bulk
 
 
-def run_agency(agency, today):
+def run_agency(agency, today, deadline=None):
     res = {
         "key": agency["key"], "name": agency["name"], "site": agency["site"],
         "url": agency["url"], "error": None, "fetched": 0, "bulk": False,
@@ -923,6 +973,8 @@ def run_agency(agency, today):
     try:
         if not agency["url"]:
             raise RuntimeError(f"адресът за търсене не е зададен (secret {agency['secret']})")
+        end = time.time() + AGENCY_BUDGET_MIN * 60
+        _budget.update(end=min(end, deadline) if deadline else end, partial=False, warned=False)
         scraped = agency["fetch"]()
     except Exception as fetch_err:
         logger.error(f"[{agency['name']}] Тегленето пропадна: {fetch_err}")
@@ -935,7 +987,10 @@ def run_agency(agency, today):
         logger.warning(f"[{agency['name']}] {res['error']} → историята остава непроменена")
         return res
 
-    df_all, new, changed, sold, bulk = update_history(agency, scraped, today)
+    partial = _budget["partial"]
+    if partial:
+        res["error"] = "времето за сайта изтече — списъкът е непълен, липсващите не са маркирани като свалени"
+    df_all, new, changed, sold, bulk = update_history(agency, scraped, today, mark_sold=not partial)
     # Отпечатъци на снимките (само за обявите без тях) — за откриване на дубликати
     df_all = duplicates.fill_image_hashes(df_all, COL_IMAGES, duplicates.url_reader(_session()))
     res.update(df=df_all, new=new, changed=changed, sold=sold, fetched=len(scraped), bulk=bulk)
@@ -948,16 +1003,25 @@ def run_agency(agency, today):
     return res
 
 
-def run_all(today=None):
-    """Тегли всички агенции. Никога не хвърля грешка — проблемите са в res['error']."""
+def run_all(today=None, deadline=None):
+    """Тегли всички агенции. Никога не хвърля грешка — проблемите са в res['error'].
+
+    deadline (time.time()) — общият краен срок: след него сайтовете се пропускат
+    (показват предишните си данни), за да остане време за imot.bg.
+    """
     today = today or datetime.now().strftime("%Y-%m-%d")
     results = []
     for agency in AGENCIES:
         logger.info(f"=== {agency['name']} ===")
         try:
-            results.append(run_agency(agency, today))
+            if deadline and time.time() > deadline:
+                raise TimeUp("пропуснат — времето за обновяването изтече")
+            results.append(run_agency(agency, today, deadline))
         except Exception as agency_err:
-            logger.exception(f"[{agency['name']}] Неочаквана грешка: {agency_err}")
+            if isinstance(agency_err, TimeUp):
+                logger.warning(f"[{agency['name']}] {agency_err} → показани са предишните данни")
+            else:
+                logger.exception(f"[{agency['name']}] Неочаквана грешка: {agency_err}")
             results.append({
                 "key": agency["key"], "name": agency["name"], "site": agency["site"],
                 "url": agency["url"], "error": str(agency_err)[:200],
