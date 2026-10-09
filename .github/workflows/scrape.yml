@@ -101,6 +101,7 @@ jobs:
           YAVLENA_URL: ${{ secrets.YAVLENA_URL }}
           HOMES_URL: ${{ secrets.HOMES_URL }}
           IMOTINET_SEARCH: ${{ secrets.IMOTINET_SEARCH }}
+          IRIDA_URL: ${{ secrets.IRIDA_URL }}
         run: |
           python imot_scraper.py
 
@@ -146,5 +147,5 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "Автоматично обновяване: $(date +'%d.%m.%Y %H:%M %Z')"
-            git push
+            git pull --rebase && git push
           fi

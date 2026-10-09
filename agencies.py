@@ -142,7 +142,7 @@ def normalize_location(loc):
     s = re.sub(r'\s+', ' ', str(loc or '')).strip()
     s = re.sub(r'^(кв\.|ж\.к\.|жк\.?)\s*', '', s, flags=re.IGNORECASE)
     s = re.sub(r'[,|/]?\s*(гр\.\s*)?София$', '', s).strip(' ,|/')
-    s = re.sub(r'^(гр\.\s*)?София\s*[,|/]\s*', '', s)
+    s = re.sub(r'^((гр\.\s*)?София\s*[,|/]\s*)+', '', s)
     s = re.sub(r'(\d)\s*[AaАа]$', r'\1А', s)  # латинско A → кирилско А
     return s
 
@@ -663,6 +663,83 @@ def fetch_imotinet():
     return list(by_link.values())
 
 
+# ================= ИРИДА =================
+# robots.txt на irida.bg забранява AI роботите (вкл. Claude), но не и останалите —
+# скрейпърът тегли сайта, а кодът е писан по страници, запазени ръчно (Ctrl+S).
+# IRIDA_URL е адресът на търсенето от браузъра; страниците са &page=N.
+
+IRIDA_URL = os.environ.get("IRIDA_URL", "")
+MLADOST = ("Младост 1", "Младост 1А", "Младост 2", "Младост 3", "Младост 4")
+
+
+def _irida_cards(html, page_url):
+    """Картите от страницата с резултати: квартал, площ, цена, снимка."""
+    soup = BeautifulSoup(html, "html.parser")
+    cards = []
+    for card in soup.select("div.property-listing"):
+        a = card.find("a", href=re.compile(r"/offers/\d+/"))
+        if not a:
+            continue
+        parts = [p.strip() for p in card.get_text("|", strip=True).split("|") if p.strip()]
+        text = " | ".join(parts)  # "|" пази квартала ("Младост 1") отделно от цената
+        m_size = re.search(r'(\d+(?:[.,]\d+)?)\s*m²', text)
+        m_price = re.search(r'(\d[\d\s]*)\s*€', text)
+        img = card.find("img")
+        src = (img.get("data-src") or img.get("data-lazy") or img.get("src") or "") if img else ""
+        cards.append(_listing(urljoin(page_url, re.sub(r'[?#].*$', '', a["href"])), **{
+            COL_TITLE: next((p for p in parts if "апартамент" in p.lower()), ""),
+            # "София, гр. София, Младост 1"
+            COL_LOCATION: next((p for p in parts if p.startswith("София")), ""),
+            COL_PRICE: _price(m_price.group(1)) if m_price else None,
+            COL_SIZE: _area(m_size.group(1)) if m_size else None,
+            COL_IMAGES: urljoin(page_url, src) if src else "",
+        }))
+    return cards, soup
+
+
+def _irida_detail(html):
+    """Етаж ("9/13"), строителство и година от страницата на обявата."""
+    text = BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
+    m_floor = re.search(r'Етаж:\s*\n\s*(\d+|партер)\s*(?:/\s*(\d+))?', text, re.IGNORECASE)
+    m_constr = re.search(r'Строителство:\s*\n\s*([^\n]+)', text)
+    m_year = re.search(r'Година:\s*\n\s*(\d{4})', text)
+    return {
+        COL_FLOOR: _int(m_floor.group(1)) if m_floor else None,
+        COL_TOTAL_FLOORS: _int(m_floor.group(2)) if m_floor and m_floor.group(2) else None,
+        COL_CONSTRUCTION: _construction_word(m_constr.group(1)) if m_constr else "",
+        COL_YEAR: int(m_year.group(1)) if m_year else None,
+    }
+
+
+def fetch_irida():
+    s = _session()
+    sep = "&" if "?" in IRIDA_URL else "?"
+    cards, soup = _irida_cards(_get(s, IRIDA_URL).text, IRIDA_URL)
+    pages = [int(n) for n in re.findall(r'[?&]page=(\d+)', " ".join(a["href"] for a in soup.find_all("a", href=True)))]
+    for page in range(2, min(max(pages or [1]), 30) + 1):
+        _pause()
+        more, _ = _irida_cards(_get(s, f"{IRIDA_URL}{sep}page={page}").text, IRIDA_URL)
+        if not more:
+            break
+        cards += more
+    # Търсенето е по дума ("младост") → оставяме само Младост 1, 1А, 2, 3, 4
+    by_link = {c[COL_LINK]: c for c in cards if c[COL_LOCATION] in MLADOST}
+    logger.info(f"[Ирида] Страници: {max(pages or [1])} | карти: {len(cards)} | в Младост 1–4: {len(by_link)}")
+
+    known, details = _known_links("irida"), 0
+    for link, row in by_link.items():
+        if link in known:
+            continue
+        try:
+            row.update({k: v for k, v in _irida_detail(_get(s, link).text).items() if not _is_missing(v)})
+            details += 1
+            _pause()
+        except Exception as det_err:
+            logger.warning(f"[Ирида] Детайлът на {link} не се зареди: {det_err}")
+    logger.info(f"[Ирида] Детайли (само нови обяви): {details}")
+    return list(by_link.values())
+
+
 # ================= РЕГИСТЪР =================
 
 AGENCIES = [
@@ -676,6 +753,8 @@ AGENCIES = [
      "secret": "HOMES_URL", "fetch": fetch_homes},
     {"key": "imotinet", "name": "imoti.net", "site": "imoti.net", "url": IMOTINET_SEARCH and
      f"{IMOTINET}/bg/obiavi/r/prodava/sofia/", "secret": "IMOTINET_SEARCH", "fetch": fetch_imotinet},
+    {"key": "irida", "name": "Ирида", "site": "irida.bg", "url": IRIDA_URL,
+     "secret": "IRIDA_URL", "fetch": fetch_irida},
 ]
 
 
