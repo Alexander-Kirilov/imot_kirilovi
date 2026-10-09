@@ -15,6 +15,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import os
+import io
+import subprocess
 import atexit
 from pathlib import Path
 
@@ -535,8 +537,8 @@ def merge_same_ad(df):
         site_hists = [h for h in grp[COL_SITE_PRICE_HISTORY].fillna("").astype(str) if h.strip()]
         if site_hists:
             rec[COL_SITE_PRICE_HISTORY] = max(site_hists, key=len)
-        if not str(rec.get(COL_IMAGES) or "").strip():
-            rec[COL_IMAGES] = next((p for p in grp[COL_IMAGES].fillna("") if str(p).strip()), "")
+        if not _text(rec.get(COL_IMAGES)):
+            rec[COL_IMAGES] = next((_text(p) for p in grp[COL_IMAGES] if _text(p)), "")
         scraper_hist = rec[COL_PRICE_HISTORY] if " → " in rec[COL_PRICE_HISTORY] else ""
         last_change = extract_last_price_change_date(scraper_hist, rec.get(COL_SITE_PRICE_HISTORY, ""))
         existing = rec.get(COL_LAST_PRICE_CHANGE_DATE)
@@ -546,6 +548,129 @@ def merge_same_ad(df):
         merged.append(rec)
     logger.info(f"Сляти записи със сменен адрес (същия номер на обява): {int(dup_mask.sum())} → {len(merged)}")
     return pd.concat([df[~dup_mask], pd.DataFrame(merged)], ignore_index=True)
+
+
+def heal_image_paths(df):
+    """Обяви без записани снимки, чиито снимки вече са свалени в docs/images/<номер>/."""
+    if df.empty or COL_IMAGES not in df.columns:
+        return df
+    healed = 0
+    for i in df.index:
+        if _text(df.at[i, COL_IMAGES]):
+            continue
+        lid = get_listing_id_from_url(str(df.at[i, COL_LINK] or ""))
+        files = sorted((IMAGES_DIR / lid).glob("*.jpg")) if lid else []
+        if files:
+            df.at[i, COL_IMAGES] = ",".join(f"images/{lid}/{f.name}" for f in files)
+            if duplicates.COL_IMAGE_HASHES in df.columns:
+                df.at[i, duplicates.COL_IMAGE_HASHES] = ""  # отпечатъците — наново
+            healed += 1
+    if healed:
+        progress(f"[imot.bg] снимки, върнати от вече свалените файлове: {healed}")
+    return df
+
+
+def repair_from_git_versions(df):
+    """Еднократно: връща изгубеното заради бъга в сливането от старите версии на данните в git.
+
+    До 09.10.2026 след първата нова обява в списъка всички следващи (вече познати) се
+    записваха като нови → губеха се ценовата история, снимките, датата от сайта, видът
+    строителство. Пуска се ръчно: Actions → Imot.bg Scraper → Run workflow → repair.
+    Само допълва празни полета и обединява историите — нищо не трие.
+    """
+    enc = secure_store.enc_path(HISTORY_FILE).as_posix()
+    try:
+        shas = subprocess.run(["git", "log", "--format=%H", "--", enc],
+                              capture_output=True, text=True, check=True).stdout.split()
+    except Exception as e:
+        logger.warning(f"Възстановяване: няма достъп до git ({e})")
+        return df
+    versions, skipped = [], 0
+    for sha in reversed(shas):  # от най-старата към най-новата
+        try:
+            blob = subprocess.run(["git", "show", f"{sha}:{enc}"], capture_output=True, check=True).stdout
+            versions.append(pd.read_parquet(io.BytesIO(secure_store.decrypt_bytes(blob))))
+        except (Exception, SystemExit) as e:  # друга парола / повреден файл → пропуска се
+            skipped += 1
+            logger.warning(f"Възстановяване: версия {sha[:7]} е пропусната ({e})")
+
+    def key(link):
+        return duplicates.ad_number(link) or str(link)
+
+    past = {}  # номер на обявата → записите ѝ във всички версии, от най-стария
+    for version in versions:
+        for rec in version.to_dict("records"):
+            past.setdefault(key(rec.get(COL_LINK)), []).append(rec)
+
+    def first_value(recs, col):  # последната непразна стойност
+        return next((_text(r.get(col)) for r in reversed(recs) if _text(r.get(col))), "")
+
+    fixed = {"ценова история": 0, "снимки": 0, "история от сайта": 0, "дата от сайта": 0,
+             "строителство": 0, "видяна за пръв път": 0, "масово добавена": 0}
+    for i in df.index:
+        recs = past.get(key(df.at[i, COL_LINK]))
+        if not recs:
+            continue
+        cur = df.loc[i].to_dict()
+
+        # Ценовата история, засечена от скрапера: обединение на всички версии
+        hist_now = combine_price_histories([cur.get(COL_PRICE_HISTORY)])
+        hist = combine_price_histories([r.get(COL_PRICE_HISTORY) for r in recs] + [cur.get(COL_PRICE_HISTORY)])
+        if hist != hist_now:
+            df.at[i, COL_PRICE_HISTORY] = hist
+            fixed["ценова история"] += 1
+
+        # Ценовата история от imot.bg — най-пълната
+        site_now = _text(cur.get(COL_SITE_PRICE_HISTORY))
+        site = max([_text(r.get(COL_SITE_PRICE_HISTORY)) for r in recs] + [site_now], key=len)
+        if len(site) > len(site_now):
+            df.at[i, COL_SITE_PRICE_HISTORY] = site
+            fixed["история от сайта"] += 1
+
+        # Полета, които само се допълват, ако сега са празни
+        for col, label in ((COL_IMAGES, "снимки"), (COL_SITE_DATE, "дата от сайта"),
+                           (COL_SITE_DATE_KIND, None), (COL_CONSTRUCTION, "строителство")):
+            if col in df.columns and not _text(cur.get(col)):
+                val = first_value(recs, col)
+                if val:
+                    df.at[i, col] = val
+                    if label:
+                        fixed[label] += 1
+                    if col == COL_IMAGES and duplicates.COL_IMAGE_HASHES in df.columns:
+                        df.at[i, duplicates.COL_IMAGE_HASHES] = ""  # отпечатъците — наново
+
+        # Кога е видяна за пръв път — най-ранната дата
+        for col in (COL_FIRST_SCRAPED, COL_FIRST_SEEN):
+            dates = [d for d in (_text(r.get(col)) for r in recs + [cur]) if d]
+            if dates and min(dates) != _text(cur.get(col)):
+                df.at[i, col] = min(dates)
+                if col == COL_FIRST_SCRAPED:
+                    fixed["видяна за пръв път"] += 1
+
+        # "Масово добавена" — както при първото ѝ добавяне
+        first_bulk = recs[0].get(COL_BULK_IMPORT)
+        if first_bulk is not None and not pd.isna(first_bulk) \
+                and bool(first_bulk) != bool(cur.get(COL_BULK_IMPORT)):
+            df.at[i, COL_BULK_IMPORT] = bool(first_bulk)
+            fixed["масово добавена"] += 1
+
+        # Последна промяна на цената — по обединените истории
+        changes = [_text(r.get(COL_LAST_PRICE_CHANGE_DATE)) for r in recs + [cur]]
+        changes.append(extract_last_price_change_date(hist if " → " in hist else "",
+                                                      site if " → " in site else ""))
+        changes = [d for d in changes if d]
+        if changes and max(changes) != _text(cur.get(COL_LAST_PRICE_CHANGE_DATE)):
+            df.at[i, COL_LAST_PRICE_CHANGE_DATE] = max(changes)
+
+        # Кога са теглени детайлите — за да не се теглят всички наново
+        if COL_DETAILS_DATE in df.columns and not _text(cur.get(COL_DETAILS_DATE)):
+            done = next((d for d in (details_date_of(r) for r in reversed(recs)) if d), "")
+            if done:
+                df.at[i, COL_DETAILS_DATE] = done
+
+    progress(f"[възстановяване] версии: {len(versions)}" + (f" (пропуснати {skipped})" if skipped else "")
+             + " · " + " · ".join(f"{k}: {v}" for k, v in fixed.items()))
+    return df
 
 
 def details_date_of(rec):
@@ -2655,6 +2780,9 @@ if not df_history.empty:
     # Една обява = един номер: imot.bg понякога сменя адреса ѝ (маха улицата,
     # сменя вида тристаен → четиристаен), а номерът остава. Иначе излиза
     # "продадена" + "нова" и историята на цената се губи.
+    if os.environ.get("REPAIR_HISTORY") == "1":
+        df_history = repair_from_git_versions(df_history)
+
     df_history = merge_same_ad(df_history)
     df_history = relink_changed_urls(df_history, df_new[COL_LINK])
 
@@ -2725,6 +2853,10 @@ if not df_history.empty:
         })
         logger.info(f"Found {len(df_changed)} price changes")
 
+# Новите обяви се добавят чак след цикъла: concat(..., ignore_index=True) нулира индекса
+# по линк и всички следващи вече познати обяви се записваха като нови (губеха история,
+# снимки, дата от сайта…)
+new_rows = []
 for _, row in df_new.iterrows():
     link = row[COL_LINK]
     row_dict = row.to_dict()
@@ -2767,18 +2899,19 @@ for _, row in df_new.iterrows():
             if prev_constr:
                 row_dict[COL_CONSTRUCTION] = prev_constr
 
-        existing_images = df_all.at[link, COL_IMAGES] if COL_IMAGES in df_all.columns else ""
+        existing_images = _text(df_all.at[link, COL_IMAGES]) if COL_IMAGES in df_all.columns else ""
 
-        if existing_images and not row_dict.get(COL_IMAGES):
+        if existing_images and not _text(row_dict.get(COL_IMAGES)):
             row_dict[COL_IMAGES] = existing_images
 
+        # Свалената от сайта история се сравнява със старата по-долу — не се презаписва тук
         for col in df_all.columns:
-            if col in row_dict and col != COL_PRICE_HISTORY and col != COL_FIRST_SEEN:
+            if col in row_dict and col not in (COL_PRICE_HISTORY, COL_FIRST_SEEN, COL_SITE_PRICE_HISTORY):
                 df_all.at[link, col] = row_dict[col]
         # First_Seen вече идва от обявата, затова го записваме изрично
         df_all.at[link, COL_FIRST_SEEN] = row_dict[COL_FIRST_SEEN]
         if COL_SITE_PRICE_HISTORY in row_dict:
-            old_site_hist = str(df_all.at[link, COL_SITE_PRICE_HISTORY] if COL_SITE_PRICE_HISTORY in df_all.columns else "") or ""
+            old_site_hist = _text(df_all.at[link, COL_SITE_PRICE_HISTORY]) if COL_SITE_PRICE_HISTORY in df_all.columns else ""
             new_site_hist = str(row_dict[COL_SITE_PRICE_HISTORY] or "").strip()
             # Пазим старата история ако новата е празна или по-кратка (Selenium може да е пропуснал)
             if new_site_hist and len(new_site_hist) >= len(old_site_hist):
@@ -2811,7 +2944,9 @@ for _, row in df_new.iterrows():
         # "Добавена" = датата от обявата; ако сайтът не я дава → днес
         row_dict[COL_FIRST_SEEN] = str(row_dict.get(COL_SITE_DATE) or "").strip() or TODAY
         row_dict[COL_BULK_IMPORT] = len(df_new_only) > BULK_IMPORT_THRESHOLD
-        df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
+        new_rows.append(row_dict)
+if new_rows:
+    df_all = pd.concat([df_all, pd.DataFrame(new_rows)], ignore_index=True)
 
 if search_failed:
     logger.warning("Някое търсене пропадна → в това обновяване не маркирам продадени")
@@ -2853,6 +2988,8 @@ logger.info(
     f"Sold: {len(df_sold_now)}  |  Total unique: {len(df_all)}"
 )
 
+# Снимки, които са свалени, но не са записани при обявата
+df_all = heal_image_paths(df_all)
 # Отпечатъци на снимките (веднъж за обява) — за откриване на дублирани/качени наново обяви
 df_all = duplicates.fill_image_hashes(df_all, COL_IMAGES, duplicates.local_reader(HTML_OUTPUT.parent))
 secure_store.write_parquet(df_all, HISTORY_FILE)

@@ -9,6 +9,11 @@ on:
     - cron: '17 10 * * *'
     - cron: '45 5 * * *'
   workflow_dispatch:
+    inputs:
+      repair:
+        description: "Еднократно: върни изгубените данни от старите версии"
+        type: boolean
+        default: false
 
   push:
     branches:
@@ -102,6 +107,8 @@ jobs:
           HOMES_URL: ${{ secrets.HOMES_URL }}
           IMOTINET_SEARCH: ${{ secrets.IMOTINET_SEARCH }}
           IRIDA_URL: ${{ secrets.IRIDA_URL }}
+          # Еднократно възстановяване на изгубени данни (само при ръчно пускане с „repair“)
+          REPAIR_HISTORY: ${{ inputs.repair && '1' || '' }}
         run: |
           python imot_scraper.py
 
