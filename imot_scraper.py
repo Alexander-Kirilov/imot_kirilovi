@@ -121,9 +121,12 @@ RECEIVERS_RAW = os.environ.get("RECEIVERS")
 RECEIVERS = [r.strip() for r in RECEIVERS_RAW.split(",") if r.strip()]
 
 # ── Search URL ────────────────────────────────────────────────────────────────
+# Един или няколко адреса (по един на ред): imot.bg позволява само един квартал и
+# един вид в адреса, напр. …/grad-sofiya/mladost-1/tristaen → 5 квартала × 3 вида = 15
 base_url = os.environ.get(
     "BASE_URL",
 )
+BASE_URLS = [u for u in re.split(r'\s+', base_url or "") if u.startswith("http")]
 
 listings = []
 
@@ -152,6 +155,7 @@ COL_FIRST_SCRAPED = 'First_Scraped_Date'  # Кога скраперът е ви�
 COL_AGE_DAYS = 'Age_Days'  # На колко дни е обявата спрямо COL_FIRST_SEEN
 COL_CONSTRUCTION = 'Construction_Type'  # Вид строителство: Тухла / Панел / ЕПК / …
 COL_SOURCE = agencies.COL_SOURCE  # Сайт: imot.bg / ERA / Home2U / Явлена
+COL_DETAILS_DATE = 'Details_Date'  # кога за последно са теглени детайлите (ценова история, снимки…)
 COL_SOURCE_KEY = agencies.COL_SOURCE_KEY  # Ключ на сайта за филтъра: imot / era / …
 
 IMOT_SOURCE, IMOT_KEY = "imot.bg", "imot"
@@ -165,7 +169,7 @@ COL_AD_CREATED = 'Ad_Created_Date'
 # Текстови колони, които се пазят като низ (без NaN) при запис в parquet/Excel
 TEXT_COLS = (
     COL_SITE_DATE, COL_SITE_DATE_KIND, COL_FIRST_SCRAPED,
-    COL_FIRST_SEEN, COL_CONSTRUCTION, duplicates.COL_IMAGE_HASHES,
+    COL_FIRST_SEEN, COL_CONSTRUCTION, duplicates.COL_IMAGE_HASHES, COL_DETAILS_DATE,
 )
 
 # Праг — ако в един run се добавят повече от толкова нови, се смятат за bulk import
@@ -174,6 +178,8 @@ BULK_IMPORT_THRESHOLD = 5
 # Лимити срещу увисване (GitHub прекъсва стъпката след 80 мин)
 PAGE_LOAD_TIMEOUT_SEC = 45   # една страница в Chrome (Selenium) — по подразбиране е 5 мин
 DETAIL_BUDGET_MIN = 55       # детайлите на imot.bg общо; след това — с каквото има
+ROTATE_PER_RUN = 40          # обяви "на смени" за освежаване на ценовата история от сайта
+IMPORT_EMAIL_THRESHOLD = 30  # повече нови наведнъж = първоначално зареждане → не в имейла
 RUN_BUDGET_MIN = 100         # целият скрипт (GitHub спира стъпката на 110-ата минута)
 AGENCIES_DEADLINE_MIN = 45   # другите сайтове приключват до тази минута от старта
 
@@ -542,6 +548,49 @@ def merge_same_ad(df):
     return pd.concat([df[~dup_mask], pd.DataFrame(merged)], ignore_index=True)
 
 
+def details_date_of(rec):
+    """Кога са теглени детайлите. За стари записи без колоната — по това дали ги има."""
+    done = rec.get(COL_DETAILS_DATE)
+    if done is not None and not pd.isna(done) and str(done).strip():
+        return str(done).strip()
+    has_details = any(str(rec.get(col) or "").strip() not in ("", "nan", "None")
+                      for col in (COL_IMAGES, COL_SITE_DATE, COL_SITE_PRICE_HISTORY))
+    scraped = rec.get(COL_SCRAPED_DATE)
+    return str(scraped).strip() if has_details and scraped is not None and not pd.isna(scraped) else ""
+
+
+def pick_detail_links(df_new):
+    """Кои обяви да се отворят за детайли (~17 с на обява) — не всички при всяко обновяване.
+
+    1) нови; 2) с променена цена в списъка; 3) без изтеглени детайли досега;
+    4) ROTATE_PER_RUN "на смени" — най-отдавна обновените, за да се освежава ценовата
+       история от сайта. Детайлите имат и общ лимит на времето (DETAIL_BUDGET_MIN).
+    """
+    links = df_new[COL_LINK].tolist()
+    hist = secure_store.read_parquet(HISTORY_FILE) if secure_store.exists(HISTORY_FILE) else pd.DataFrame()
+    if hist.empty:
+        return links
+    known = {duplicates.ad_number(r.get(COL_LINK)) or r.get(COL_LINK): r for r in hist.to_dict("records")}
+    new, changed, missing, rest = [], [], [], []
+    for _, row in df_new.iterrows():
+        link = row[COL_LINK]
+        rec = known.get(duplicates.ad_number(link) or link)
+        if rec is None:
+            new.append(link)
+            continue
+        price, old_price = row.get(COL_PRICE), rec.get(COL_PRICE)
+        if pd.notna(price) and pd.notna(old_price) and round(float(price)) != round(float(old_price)):
+            changed.append(link)
+        elif not details_date_of(rec):
+            missing.append(link)
+        else:
+            rest.append((details_date_of(rec), link))
+    rotation = [link for _, link in sorted(rest)[:ROTATE_PER_RUN]]
+    progress(f"[imot.bg] детайли за: нови {len(new)} · нова цена {len(changed)} · "
+             f"без детайли {len(missing)} · на смени {len(rotation)} (от {len(links)})")
+    return new + changed + missing + rotation
+
+
 def relink_changed_urls(df, new_links):
     """Обява с нов адрес, но познат номер → записът в историята поема новия адрес."""
     if df.empty:
@@ -789,7 +838,7 @@ def scrape_site_price_histories_selenium(links):
     total = len(links)
     result = {
         url: {"price_history": "", "images": "", "site_date": "",
-              "site_date_kind": "", "construction": ""}
+              "site_date_kind": "", "construction": "", "done": False}
         for url in links
     }
 
@@ -840,6 +889,7 @@ def scrape_site_price_histories_selenium(links):
         if idx % 10 == 1 or idx == total:
             progress(f"[imot.bg] детайли {idx}/{total} · {elapsed_min:.0f} мин")
         logger.info(f"[{idx}/{total}] {url}")
+        result[url]["done"] = True
 
         # ================= PRICE HISTORY =================
         price_hist = ""
@@ -2410,6 +2460,8 @@ activateFromHash();
 
 
 # ================= SCRAPING =================
+# Ако някое търсене пропадне, липсващите обяви НЕ се маркират като продадени
+search_failed = False
 with sync_playwright() as p:
     logger.info("Opening browser (headless)…")
     browser = p.chromium.launch(
@@ -2420,62 +2472,77 @@ with sync_playwright() as p:
     page.set_extra_http_headers({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
-    total_ads = None
     items_per_page = 40
 
     try:
-        logger.info(f"Loading first page: {base_url}")
-        page.goto(base_url, wait_until='domcontentloaded', timeout=60000)
-        page.wait_for_selector('div.item', timeout=25000)
-
-        html_content = page.content()
-        total_ads = parse_total_ads(html_content)
-        if total_ads:
-            logger.info(f"Total listings: {total_ads}")
-        else:
-            logger.warning("Could not extract total listings count")
-
-        parse_page(html_content, pg_num=1)
-
-        max_pages = (
-            (total_ads // items_per_page) + (1 if total_ads % items_per_page else 0)
-            if total_ads else 5
-        )
-        logger.info(f"Planning to scrape up to {max_pages} pages")
-
-        pg = 2
-        while pg <= max_pages + 2:
+        for search_no, base_url in enumerate(BASE_URLS, start=1):
+            total_ads = None
             try:
-                url = (
-                    base_url.replace('?', f'/p-{pg}?')
-                    if '?' in base_url else f"{base_url}/p-{pg}"
-                )
-                logger.info(f"Loading page {pg}: {url}")
-                page.goto(url, wait_until='domcontentloaded', timeout=45000)
+                logger.info(f"Search {search_no}/{len(BASE_URLS)} — loading first page: {base_url}")
+                page.goto(base_url, wait_until='domcontentloaded', timeout=60000)
                 try:
-                    page.wait_for_selector('div.item', timeout=12000)
+                    page.wait_for_selector('div.item', timeout=25000)
                 except PlaywrightTimeoutError:
-                    logger.info(f"No more listings on page {pg}")
-                    break
-                scraped = parse_page(page.content(), pg_num=pg)
-                if scraped == 0:
-                    logger.info(f"Empty page {pg} → stopping")
-                    break
-                time.sleep(2.8 + random.uniform(0, 1.8))
-            except Exception as scrape_err:
-                logger.error(f"Error on page {pg}: {scrape_err}")
-                break
-            pg += 1
+                    if "Няма намерени обяви" in page.content():
+                        logger.info(f"Search {search_no}: няма обяви")
+                        continue
+                    raise
+
+                html_content = page.content()
+                total_ads = parse_total_ads(html_content)
+                if total_ads:
+                    logger.info(f"Total listings: {total_ads}")
+                else:
+                    logger.warning("Could not extract total listings count")
+
+                parse_page(html_content, pg_num=1)
+
+                max_pages = (
+                    (total_ads // items_per_page) + (1 if total_ads % items_per_page else 0)
+                    if total_ads else 5
+                )
+                logger.info(f"Planning to scrape up to {max_pages} pages")
+
+                pg = 2
+                while pg <= max_pages:
+                    try:
+                        url = (
+                            base_url.replace('?', f'/p-{pg}?')
+                            if '?' in base_url else f"{base_url}/p-{pg}"
+                        )
+                        logger.info(f"Loading page {pg}: {url}")
+                        page.goto(url, wait_until='domcontentloaded', timeout=45000)
+                        try:
+                            page.wait_for_selector('div.item', timeout=12000)
+                        except PlaywrightTimeoutError:
+                            logger.info(f"No more listings on page {pg}")
+                            break
+                        scraped = parse_page(page.content(), pg_num=pg)
+                        if scraped == 0:
+                            logger.info(f"Empty page {pg} → stopping")
+                            break
+                        time.sleep(2.8 + random.uniform(0, 1.8))
+                    except Exception as scrape_err:
+                        logger.error(f"Error on page {pg}: {scrape_err}")
+                        search_failed = True
+                        break
+                    pg += 1
+                time.sleep(2 + random.uniform(0, 1.5))
+            except Exception as search_err:
+                logger.error(f"Search {search_no} failed: {search_err}")
+                search_failed = True
 
     except Exception as e:
         logger.critical(f"Critical scraping error: {e}")
+        search_failed = True
     finally:
         browser.close()
         logger.info("Browser closed")
 
 # ================= ДРУГИ АГЕНЦИИ (ERA, Home2U, Явлена) =================
 # Не хвърля грешка: ако някой сайт пропадне, табът му показва предишните данни
-progress(f"[imot.bg] списък: {len(listings)} обяви")
+progress(f"[imot.bg] списък: {len(listings)} обяви от {len(BASE_URLS)} търсения"
+         + (" ⚠ някое търсене пропадна — без маркиране на продадени" if search_failed else ""))
 agency_results = agencies.run_all(TODAY, deadline=SCRIPT_START + AGENCIES_DEADLINE_MIN * 60)
 def short_reason(error):
     """Кратка причина за публичния лог — без адреси (в тях е търсенето)."""
@@ -2505,10 +2572,10 @@ if not listings:
         logger.error(f"HTML generation failed: {html_err}")
     exit()
 
-df_new = pd.DataFrame(listings)
+df_new = pd.DataFrame(listings).drop_duplicates(subset=[COL_LINK]).reset_index(drop=True)
 df_sold_now = pd.DataFrame()
 
-selenium_results = scrape_site_price_histories_selenium(df_new[COL_LINK].tolist())
+selenium_results = scrape_site_price_histories_selenium(pick_detail_links(df_new))
 progress("[imot.bg] детайлите са готови")
 df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
     lambda u: selenium_results.get(u, {}).get("price_history", "")
@@ -2746,7 +2813,9 @@ for _, row in df_new.iterrows():
         row_dict[COL_BULK_IMPORT] = len(df_new_only) > BULK_IMPORT_THRESHOLD
         df_all = pd.concat([df_all, pd.DataFrame([row_dict])], ignore_index=True)
 
-if not df_history.empty:
+if search_failed:
+    logger.warning("Някое търсене пропадна → в това обновяване не маркирам продадени")
+if not df_history.empty and not search_failed:
     base_unsold = df_history[~df_history[COL_SOLD].fillna(False)]
     if not base_unsold.empty:
         sold_links = set(base_unsold[COL_LINK]) - set(df_new[COL_LINK])
@@ -2757,6 +2826,12 @@ if not df_history.empty:
             df_all.loc[df_all[COL_LINK].isin(sold_links), COL_SOLD] = True
 
 df_all = df_all.drop_duplicates(subset=[COL_LINK], keep='last').reset_index(drop=True)
+
+# Кога са теглени детайлите на всяка обява — за избора "на смени" (pick_detail_links)
+if COL_DETAILS_DATE not in df_all.columns:
+    df_all[COL_DETAILS_DATE] = [details_date_of(r) for r in df_all.to_dict("records")]  # миграция
+detailed_links = {u for u, v in selenium_results.items() if v.get("done")}
+df_all.loc[df_all[COL_LINK].isin(detailed_links), COL_DETAILS_DATE] = TODAY
 
 # ── На колко дни е всяка обява спрямо "Добавена" (преизчислява се всеки run) ──
 df_all[COL_AGE_DAYS] = pd.array(
@@ -2857,6 +2932,11 @@ except Exception as e:
 
 logger.info(f"Excel saved: {excel_file}")
 progress("Сайтът и Excel са готови")
+
+# Първоначално зареждане (напр. разширено търсене): стотици "нови" наведнъж не са нови обяви
+if len(df_new_only) > IMPORT_EMAIL_THRESHOLD:
+    logger.info(f"{len(df_new_only)} нови наведнъж (първоначално зареждане) → не се пращат по имейла")
+    df_new_only = df_new_only.iloc[0:0]
 
 # ================= EMAIL =================
 if len(df_new_only) > 0 or len(df_changed) > 0 or len(df_sold_now) > 0 \
