@@ -99,6 +99,8 @@ jobs:
           ERA_URL: ${{ secrets.ERA_URL }}
           HOME2U_URL: ${{ secrets.HOME2U_URL }}
           YAVLENA_URL: ${{ secrets.YAVLENA_URL }}
+          HOMES_URL: ${{ secrets.HOMES_URL }}
+          IMOTINET_SEARCH: ${{ secrets.IMOTINET_SEARCH }}
         run: |
           python imot_scraper.py
 

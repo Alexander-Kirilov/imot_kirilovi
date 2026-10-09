@@ -17,7 +17,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, urljoin, urlsplit
 
 import pandas as pd
 import requests
@@ -140,8 +140,9 @@ def _int(text):
 def normalize_location(loc):
     """'кв. Младост 2, София' / 'Младост 1, София' / 'Младост 1A' → 'Младост 2' / 'Младост 1' / 'Младост 1А'."""
     s = re.sub(r'\s+', ' ', str(loc or '')).strip()
-    s = re.sub(r'^(кв\.|ж\.к\.|жк)\s*', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^(кв\.|ж\.к\.|жк\.?)\s*', '', s, flags=re.IGNORECASE)
     s = re.sub(r'[,|/]?\s*(гр\.\s*)?София$', '', s).strip(' ,|/')
+    s = re.sub(r'^(гр\.\s*)?София\s*[,|/]\s*', '', s)
     s = re.sub(r'(\d)\s*[AaАа]$', r'\1А', s)  # латинско A → кирилско А
     return s
 
@@ -495,6 +496,173 @@ def fetch_yavlena():
     return result
 
 
+# ================= ДЕТАЙЛИ САМО ЗА НОВИ ОБЯВИ =================
+# При големите сайтове (стотици обяви) етажът/строителството се теглят веднъж —
+# за обява, която вече е в историята, update_history пази предишните стойности.
+
+def _known_links(key):
+    hist = load_history(key)
+    return set(hist[COL_LINK]) if not hist.empty and COL_LINK in hist.columns else set()
+
+
+CONSTRUCTION_WORDS = ("Тухла", "Панел", "ЕПК", "ПК", "Гредоред", "Монолит", "Сглобяема")
+
+
+def _construction_word(text):
+    for word in CONSTRUCTION_WORDS:
+        if re.search(rf'(?<![А-Яа-я]){word}(?![А-Яа-я])', str(text or "")):
+            return word
+    return ""
+
+
+# ================= HOMES.BG =================
+# Внимание: "днес"/"вчера" в homes.bg и "Активирана на" в imoti.net са дати на
+# подновяване, не на публикуване — затова не се ползват за "Добавена".
+# Сайтът е React приложение — обявите идват от неговото JSON API.
+# HOMES_URL е адресът на търсенето от браузъра (homes.bg/?typeId=…&neighbourhoods[]=…);
+# API-то приема същите параметри.
+
+HOMES_URL = os.environ.get("HOMES_URL", "")
+HOMES_API = "https://www.homes.bg/api/"
+
+
+def _homes_photo(photo):
+    if not photo or not photo.get("name"):
+        return ""
+    portrait = int(photo.get("height") or 0) > int(photo.get("width") or 0)
+    return f"https://g1.homes.bg/{photo.get('path', '')}{photo['name']}{'o' if portrait else 'b'}.jpg"
+
+
+def fetch_homes():
+    s = _session()
+    s.headers.update({"Accept": "application/json", "Referer": "https://www.homes.bg/"})
+    query = urlsplit(HOMES_URL).query
+    offers, start, total = {}, 0, None
+    while start < 3000:
+        d = _get(s, f"{HOMES_API}offers?{query}&startIndex={start}&stopIndex={start + 99}").json()
+        total = d.get("offersCount", total)
+        chunk = d.get("result") or []
+        for o in chunk:
+            offers.setdefault(f"{o.get('type')}{o.get('id')}", o)
+        if not chunk or not d.get("hasMoreItems"):
+            break
+        start += 100
+        _pause()
+    logger.info(f"[homes.bg] Обяви по филтъра: {total} | изтеглени: {len(offers)}")
+
+    known = _known_links("homes")
+    result, details = [], 0
+    for o in offers.values():
+        link = urljoin("https://www.homes.bg", o.get("viewHref") or "")
+        title = o.get("title") or ""  # "Тристаен, 76m²"
+        m_size = re.search(r'(\d+(?:[.,]\d+)?)\s*m', title)
+        photos = o.get("photos") or ([o["photo"]] if o.get("photo") else [])
+        row = _listing(link, **{
+            COL_TITLE: title,
+            COL_LOCATION: o.get("location") or "",
+            COL_PRICE: _price((o.get("price") or {}).get("value")),
+            COL_SIZE: _area(m_size.group(1)) if m_size else None,
+            COL_CONSTRUCTION: _construction_word(o.get("description")),  # "Панел, Обзаведен, ТЕЦ"
+            COL_IMAGES: ",".join(u for u in (_homes_photo(ph) for ph in photos[:2]) if u),
+        })
+        if link not in known:
+            try:
+                attrs = {a.get("key"): a.get("value") for a in
+                         _get(s, f"{HOMES_API}offers/{o.get('type')}/{o.get('id')}").json()
+                         .get("data", {}).get("attributes", [])}
+                row[COL_FLOOR] = _int(attrs.get("floor"))            # "2-ри"
+                row[COL_TOTAL_FLOORS] = _int(attrs.get("total_floors"))
+                row[COL_CONSTRUCTION] = attrs.get("build_type") or row[COL_CONSTRUCTION]
+                details += 1
+                _pause()
+            except Exception as det_err:
+                logger.warning(f"[homes.bg] Детайлът на {link} не се зареди: {det_err}")
+        result.append(row)
+    logger.info(f"[homes.bg] Детайли (само нови обяви): {details}")
+    return result
+
+
+# ================= IMOTI.NET =================
+# Търсенето е POST форма, която връща номер на търсене (sid) за страниците.
+# IMOTINET_SEARCH са полетата на формата като query string, напр.
+# ad_type_id=2&world_area_id=1&property_type_id[]=9&second_descendant_id[]=5758&…
+
+IMOTINET_SEARCH = os.environ.get("IMOTINET_SEARCH", "")
+IMOTINET = "https://www.imoti.net"
+
+
+def _imotinet_cards(html):
+    soup = BeautifulSoup(html, "html.parser")
+    cards = []
+    for li in soup.select("li.clearfix"):
+        a = li.select_one("a[href*='/obiava/']")
+        info = li.select_one("div.real-estate-text")
+        if not a or not info:
+            continue
+        text = re.sub(r'\s+', ' ', info.get_text(" ", strip=True))
+        heading = info.select_one("h3")
+        heading_txt = heading.get_text(" ", strip=True) if heading else ""
+        m_size = re.search(r'(\d+(?:[.,]\d+)?)\s*м', heading_txt)
+        price_el = info.select_one(".price")  # "387 671 € 758 219 BGN" — отделно от квартала
+        m_price = re.search(r'(\d[\d\s]*)\s*€', price_el.get_text(" ", strip=True)) if price_el else None
+        m_floor = re.search(r'Етаж:\s*(\d+|партер)(?:\s*от\s*(\d+))?', text, re.IGNORECASE)
+        loc = info.select_one("span.location")
+        img = li.select_one("img")
+        cards.append(_listing(IMOTINET + re.sub(r'\?.*$', '', a["href"]), **{
+            COL_TITLE: heading_txt,
+            COL_LOCATION: loc.get_text(strip=True) if loc else "",
+            COL_PRICE: _price(m_price.group(1)) if m_price else None,
+            COL_SIZE: _area(m_size.group(1)) if m_size else None,
+            COL_FLOOR: _int(m_floor.group(1)) if m_floor else None,
+            COL_TOTAL_FLOORS: _int(m_floor.group(2)) if m_floor and m_floor.group(2) else None,
+            COL_IMAGES: urljoin(IMOTINET, img.get("src") or img.get("data-src") or "") if img else "",
+        }))
+    return cards, soup
+
+
+def fetch_imotinet():
+    s = _session()
+    _get(s, f"{IMOTINET}/bg/obiavi/r/prodava/sofia/")  # бисквитка за сесията
+    fields = parse_qsl(IMOTINET_SEARCH, keep_blank_values=True)
+    if not any(k == "items_per_page" for k, _ in fields):
+        fields.append(("items_per_page", "30"))
+    r = s.post(f"{IMOTINET}/bg/obiavi/r", data=fields, timeout=30)
+    r.raise_for_status()
+    base, sid = r.url.split("?")[0], parse_qs(urlsplit(r.url).query).get("sid", [""])[0]
+    if not sid:
+        raise RuntimeError("imoti.net не върна номер на търсене (sid)")
+
+    cards, soup = _imotinet_cards(r.text)
+    last_page = max([int(n) for n in re.findall(r'[?&]page=(\d+)&(?:amp;)?sid=' + re.escape(sid), r.text)] or [1])
+    for page in range(2, min(last_page, 40) + 1):
+        _pause()
+        more, _ = _imotinet_cards(_get(s, f"{base}?page={page}&sid={sid}").text)
+        if not more:
+            break
+        cards += more
+    by_link = {c[COL_LINK]: c for c in cards}
+    logger.info(f"[imoti.net] Страници: {last_page} | обяви: {len(by_link)}")
+
+    # Строителството е само в детайла → теглим го за обявите, които още не познаваме
+    known, details = _known_links("imotinet"), 0
+    for link, row in by_link.items():
+        if link in known:
+            continue
+        try:
+            text = BeautifulSoup(_get(s, link).text, "html.parser").get_text("\n", strip=True)
+            # "Строителство:\nПанел" — от началото на реда, за да не хване "Година на строителство:"
+            m = re.search(r'(?mi)^строителство:?\s*\n([^\n]+)', text)
+            row[COL_CONSTRUCTION] = _construction_word(m.group(1)) if m else ""
+            m_year = re.search(r'(?mi)^Година на строителство:?\s*\n\s*(\d{4})', text)
+            row[COL_YEAR] = int(m_year.group(1)) if m_year else None
+            details += 1
+            _pause()
+        except Exception as det_err:
+            logger.warning(f"[imoti.net] Детайлът на {link} не се зареди: {det_err}")
+    logger.info(f"[imoti.net] Детайли (само нови обяви): {details}")
+    return list(by_link.values())
+
+
 # ================= РЕГИСТЪР =================
 
 AGENCIES = [
@@ -504,6 +672,10 @@ AGENCIES = [
      "secret": "HOME2U_URL", "fetch": fetch_home2u},
     {"key": "yavlena", "name": "Явлена", "site": "yavlena.com", "url": YAVLENA_URL,
      "secret": "YAVLENA_URL", "fetch": fetch_yavlena},
+    {"key": "homes", "name": "homes.bg", "site": "homes.bg", "url": HOMES_URL,
+     "secret": "HOMES_URL", "fetch": fetch_homes},
+    {"key": "imotinet", "name": "imoti.net", "site": "imoti.net", "url": IMOTINET_SEARCH and
+     f"{IMOTINET}/bg/obiavi/r/prodava/sofia/", "secret": "IMOTINET_SEARCH", "fetch": fetch_imotinet},
 ]
 
 

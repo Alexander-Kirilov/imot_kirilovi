@@ -1268,6 +1268,8 @@ def _combine_sites(df_imot, agency_results):
     is_imot = df[COL_SOURCE_KEY] == IMOT_KEY
     df[COL_AD_CREATED] = df[COL_LINK].map(duplicates.imot_created_date).where(is_imot, df[COL_SITE_DATE])
     df.loc[is_imot & (df[COL_AD_CREATED] != ""), COL_FIRST_SEEN] = df[COL_AD_CREATED]
+    # Първо зареждане на сайт без дата в обявата → не е "добавена днес": празно и най-отдолу
+    df.loc[df[COL_BULK_IMPORT] & (df[COL_AD_CREATED].fillna("") == ""), COL_FIRST_SEEN] = ""
     df[COL_AGE_DAYS] = pd.array([days_since(v) for v in df[COL_FIRST_SEEN]], dtype="Int64")
 
     # В) един апартамент в няколко обяви (по снимките): качена наново / също в друга обява
@@ -1607,6 +1609,10 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
   nav.site-nav a.site-btn-era     {{ --site: #fb7185; }}
   nav.site-nav a.site-btn-home2u  {{ --site: var(--green); }}
   nav.site-nav a.site-btn-yavlena {{ --site: var(--orange); }}
+  nav.site-nav a.site-btn-homes     {{ --site: #a78bfa; }}
+  nav.site-nav a.site-btn-imotinet  {{ --site: #22d3ee; }}
+  nav.site-nav a.site-btn-irida     {{ --site: #f472b6; }}
+  nav.site-nav a.site-btn-imotiinfo {{ --site: #84cc16; }}
   nav.site-nav a.site-btn:hover {{ border-color: var(--site); }}
   nav.site-nav a.site-btn.active {{
     color: var(--site);
@@ -1639,6 +1645,10 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
   .src-era     {{ background: rgba(244, 63, 94, .14);  color: #fb7185; }}
   .src-home2u  {{ background: rgba(62, 207, 142, .14); color: var(--green); }}
   .src-yavlena {{ background: rgba(245, 158, 11, .14); color: var(--orange); }}
+  .src-homes     {{ background: rgba(167, 139, 250, .16); color: #a78bfa; }}
+  .src-imotinet  {{ background: rgba(34, 211, 238, .14);  color: #22d3ee; }}
+  .src-irida     {{ background: rgba(244, 114, 182, .14); color: #f472b6; }}
+  .src-imotiinfo {{ background: rgba(132, 204, 22, .14);  color: #84cc16; }}
   /* когато е избран един сайт, колоната "Сайт" е излишна */
   main.one-site .col-src {{ display: none; }}
 
