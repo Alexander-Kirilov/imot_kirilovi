@@ -131,6 +131,7 @@ base_url = os.environ.get(
 BASE_URLS = [u for u in re.split(r'\s+', base_url or "") if u.startswith("http")]
 
 listings = []
+LIST_IMAGES = {}  # линк → снимките от списъка с резултати (пълен размер)
 
 # ── Column constants ──────────────────────────────────────────────────────────
 COL_LINK = 'Link'
@@ -182,6 +183,7 @@ PAGE_LOAD_TIMEOUT_SEC = 45   # една страница в Chrome (Selenium) �
 DETAIL_BUDGET_MIN = 55       # детайлите на imot.bg общо; след това — с каквото има
 ROTATE_PER_RUN = 40          # обяви "на смени" за освежаване на ценовата история от сайта
 IMPORT_EMAIL_THRESHOLD = 30  # повече нови наведнъж = първоначално зареждане → не в имейла
+LIST_IMAGES_BUDGET_MIN = 15  # снимки от списъка за обяви без снимки (след първото зареждане са малко)
 RUN_BUDGET_MIN = 100         # целият скрипт (GitHub спира стъпката на 110-ата минута)
 AGENCIES_DEADLINE_MIN = 45   # другите сайтове приключват до тази минута от старта
 
@@ -406,6 +408,12 @@ def parse_page(page_content, pg_num=None):
             elif not href.startswith('http'):
                 href = 'https://www.imot.bg/' + href
 
+            # Първите две снимки — същите като в обявата; с /big1/ са в пълен размер
+            pics = [img.get('src') or '' for img in item.find_all('img')]
+            pics = ['https:' + u if u.startswith('//') else u for u in pics if 'photosimotbg' in u]
+            if pics:
+                LIST_IMAGES[href] = [re.sub(r'/([^/]+\.jpg)$', r'//big1/\1', u) for u in pics[:2]]
+
             price_div = item.find('div', class_='price')
             price_raw = price_div.get_text(strip=True) if price_div else ''
             price_eur = clean_price(price_raw)
@@ -548,6 +556,32 @@ def merge_same_ad(df):
         merged.append(rec)
     logger.info(f"Сляти записи със сменен адрес (същия номер на обява): {int(dup_mask.sum())} → {len(merged)}")
     return pd.concat([df[~dup_mask], pd.DataFrame(merged)], ignore_index=True)
+
+
+def download_list_images(df_new):
+    """Снимки направо от списъка с резултати за обяви, които още нямат свалени снимки.
+
+    Така обявите имат снимки веднага, без да чакат детайлите (~17 с на обява, а при
+    стотици нови — няколко обновявания). Детайлите после ползват вече свалените файлове.
+    """
+    todo = []
+    for link in df_new[COL_LINK]:
+        lid = get_listing_id_from_url(link)
+        if lid and LIST_IMAGES.get(link) and not any((IMAGES_DIR / lid).glob("*.jpg")):
+            todo.append(link)
+    start, saved = time.time(), {}
+    for link in todo:
+        if (time.time() - start) / 60 > LIST_IMAGES_BUDGET_MIN \
+                or (time.time() - SCRIPT_START) / 60 > RUN_BUDGET_MIN - 5:
+            logger.warning(f"Снимки от списъка: лимитът изтече на {len(saved)}/{len(todo)}")
+            break
+        paths = download_images_from_urls(link, LIST_IMAGES[link])
+        if isinstance(paths, tuple) and paths[0]:
+            saved[link] = paths[0]
+        time.sleep(0.2)
+    if todo:
+        progress(f"[imot.bg] снимки от списъка: {len(saved)} от {len(todo)} обяви без снимки")
+    return saved
 
 
 def heal_image_paths(df):
@@ -2700,6 +2734,7 @@ if not listings:
 df_new = pd.DataFrame(listings).drop_duplicates(subset=[COL_LINK]).reset_index(drop=True)
 df_sold_now = pd.DataFrame()
 
+list_images = download_list_images(df_new)
 selenium_results = scrape_site_price_histories_selenium(pick_detail_links(df_new))
 progress("[imot.bg] детайлите са готови")
 df_new[COL_SITE_PRICE_HISTORY] = df_new[COL_LINK].map(
@@ -2710,7 +2745,7 @@ num_with_history = df_new[COL_SITE_PRICE_HISTORY].str.strip().astype(bool).sum()
 logger.info(f"Извлечени ценови истории: {num_with_history} от {len(df_new)} обяви")
 
 df_new[COL_IMAGES] = df_new[COL_LINK].map(
-    lambda u: selenium_results.get(u, {}).get("images", "")
+    lambda u: selenium_results.get(u, {}).get("images", "") or list_images.get(u, "")
 )
 
 # ── Дата на обявата, свалена от самата страница в imot.bg ─────────────────────
@@ -2903,6 +2938,9 @@ for _, row in df_new.iterrows():
 
         if existing_images and not _text(row_dict.get(COL_IMAGES)):
             row_dict[COL_IMAGES] = existing_images
+        elif _text(row_dict.get(COL_IMAGES)) != existing_images \
+                and duplicates.COL_IMAGE_HASHES in df_all.columns:
+            df_all.at[link, duplicates.COL_IMAGE_HASHES] = ""  # нови снимки → отпечатъците наново
 
         # Свалената от сайта история се сравнява със старата по-долу — не се презаписва тук
         for col in df_all.columns:

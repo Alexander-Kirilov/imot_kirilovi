@@ -652,6 +652,10 @@ def _imotinet_cards(html):
         m_floor = re.search(r'Етаж:\s*(\d+|партер)(?:\s*от\s*(\d+))?', text, re.IGNORECASE)
         loc = info.select_one("span.location")
         img = li.select_one("img")
+        src = urljoin(IMOTINET, img.get("src") or img.get("data-src") or "") if img else ""
+        # Миниатюрата (thumb_280x210_…) е изрязана → отпечатъкът не съвпада със същата
+        # снимка в другите сайтове; без "thumb_…_" е цялата снимка. "?ver=…" се сменя → без него
+        src = re.sub(r'\?.*$', '', re.sub(r'/thumb_\d+x\d+_', '/', src))
         cards.append(_listing(IMOTINET + re.sub(r'\?.*$', '', a["href"]), **{
             COL_TITLE: heading_txt,
             COL_LOCATION: loc.get_text(strip=True) if loc else "",
@@ -659,7 +663,7 @@ def _imotinet_cards(html):
             COL_SIZE: _area(m_size.group(1)) if m_size else None,
             COL_FLOOR: _int(m_floor.group(1)) if m_floor else None,
             COL_TOTAL_FLOORS: _int(m_floor.group(2)) if m_floor and m_floor.group(2) else None,
-            COL_IMAGES: urljoin(IMOTINET, img.get("src") or img.get("data-src") or "") if img else "",
+            COL_IMAGES: src,
         }))
     return cards, soup
 
@@ -868,6 +872,9 @@ def update_history(agency, scraped, today, mark_sold=True):
             rec = dict(old)
             # Празно поле в този run не трие вече познатата стойност
             rec.update({k: v for k, v in item.items() if not _is_missing(v)})
+            # Други снимки (напр. цялата вместо миниатюра) → отпечатъците се изчисляват наново
+            if not _is_missing(item.get(COL_IMAGES)) and item.get(COL_IMAGES) != old.get(COL_IMAGES):
+                rec[duplicates.COL_IMAGE_HASHES] = ""
             rec[COL_FIRST_SEEN] = (item.get(COL_SITE_DATE) or old.get(COL_FIRST_SEEN)
                                    or old.get(COL_FIRST_SCRAPED) or today)
             old_price = old.get(COL_PRICE)
