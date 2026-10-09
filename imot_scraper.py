@@ -408,11 +408,11 @@ def parse_page(page_content, pg_num=None):
             elif not href.startswith('http'):
                 href = 'https://www.imot.bg/' + href
 
-            # Първите две снимки — същите като в обявата; с /big1/ са в пълен размер
+            # Първите две снимки — същите като в обявата (малки; пълният размер — при тегленето)
             pics = [img.get('src') or '' for img in item.find_all('img')]
             pics = ['https:' + u if u.startswith('//') else u for u in pics if 'photosimotbg' in u]
             if pics:
-                LIST_IMAGES[href] = [re.sub(r'/([^/]+\.jpg)$', r'//big1/\1', u) for u in pics[:2]]
+                LIST_IMAGES[href] = pics[:2]
 
             price_div = item.find('div', class_='price')
             price_raw = price_div.get_text(strip=True) if price_div else ''
@@ -575,9 +575,14 @@ def download_list_images(df_new):
                 or (time.time() - SCRIPT_START) / 60 > RUN_BUDGET_MIN - 5:
             logger.warning(f"Снимки от списъка: лимитът изтече на {len(saved)}/{len(todo)}")
             break
-        paths = download_images_from_urls(link, LIST_IMAGES[link])
-        if isinstance(paths, tuple) and paths[0]:
-            saved[link] = paths[0]
+        # Пълният размер е в /big1/ или /big/ (според обявата); малката не се взима —
+        # ако и двете липсват, снимките идват с детайлите
+        for size_dir in ("big1", "big"):
+            urls = [re.sub(r'/([^/]+\.jpg)$', rf'//{size_dir}/\1', u) for u in LIST_IMAGES[link]]
+            paths = download_images_from_urls(link, urls)
+            if isinstance(paths, tuple) and paths[0]:
+                saved[link] = paths[0]
+                break
         time.sleep(0.2)
     if todo:
         progress(f"[imot.bg] снимки от списъка: {len(saved)} от {len(todo)} обяви без снимки")
