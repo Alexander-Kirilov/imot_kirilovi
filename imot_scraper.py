@@ -2859,16 +2859,21 @@ if not df_history.empty:
         how='inner',
         suffixes=('_new', '_old')
     )
-    changed_mask = merged[f'{COL_PRICE}_new'] != merged[f'{COL_PRICE}_old']
+    # Само истинска смяна на цената: "При запитване" (без цена) не е промяна — иначе
+    # NaN != NaN и такива обяви излизат като "промяна" при всяко обновяване
+    price_new = pd.to_numeric(merged[f'{COL_PRICE}_new'], errors='coerce')
+    price_old = pd.to_numeric(merged[f'{COL_PRICE}_old'], errors='coerce')
+    changed_mask = price_new.notna() & price_old.notna() & (price_new.round() != price_old.round())
     changed = merged[changed_mask].copy()
 
     if not changed.empty:
         def update_history(hist_row):
-            hist = hist_row[f'{COL_PRICE_HISTORY}_old']
-            old_entry = format_price_history_entry(hist_row[f'{COL_PRICE}_old'], "before")
-            if old_entry and old_entry not in hist:
-                return f"{hist} → {old_entry}" if hist.strip() else old_entry
-            return hist
+            # Историята до момента + новата цена с днешна дата (както се записва и в историята)
+            hist = str(hist_row[f'{COL_PRICE_HISTORY}_old'] or "").strip()
+            if not hist:
+                hist = format_price_history_entry(hist_row[f'{COL_PRICE}_old'], "преди")
+            new_entry = format_price_history_entry(hist_row[f'{COL_PRICE}_new'], TODAY)
+            return f"{hist} → {new_entry}" if hist else new_entry
 
 
         changed[f'{COL_PRICE_HISTORY}_updated'] = changed.apply(update_history, axis=1)
@@ -2888,6 +2893,7 @@ if not df_history.empty:
             f'{COL_PRICE_HISTORY}_updated',
         ]].rename(columns={
             f'{COL_LOCATION}_old': COL_LOCATION,
+            f'{COL_PRICE}_new': COL_PRICE,  # имейлът показва "Нова цена" от COL_PRICE
             f'{COL_SIZE}_new': COL_SIZE,
             f'{COL_PRICE_HISTORY}_updated': COL_PRICE_HISTORY,
         })
