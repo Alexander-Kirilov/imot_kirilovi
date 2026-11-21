@@ -3226,6 +3226,63 @@ a{color:#4f9cf9;text-decoration:none}
         hint = "<div class='scroll-hint'>← плъзни за повече →</div>"
         return f"{hint}<div class='tbl-scroll'><table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table></div>"
 
+    def _num(x):
+        try:
+            f = float(x)
+            return f if pd.notna(f) else None
+        except (ValueError, TypeError):
+            return None
+
+    def _txt(x):
+        return str(x).strip() if pd.notna(x) and str(x).strip() not in ("", "nan") else ""
+
+    def to_html_cards(df_in):
+        """Промените в цена като карти в една колона: на телефона не се плъзга
+        настрани (жестът "назад" на Android) и нищо не се скрива. Стара → нова
+        цена и % се виждат веднага. Всичко е с inline стилове заради Gmail."""
+        cards = []
+        for _, r in df_in.iterrows():
+            link = r.get(COL_LINK, "")
+            link = link if isinstance(link, str) and link.startswith("http") else ""
+            old_p, new_p = _num(r.get('Price_EUR_old')), _num(r.get(COL_PRICE))
+            pct_html = ""
+            accent = "#d97706"
+            if old_p and new_p:
+                pct = (new_p - old_p) / old_p * 100
+                down = pct < 0
+                accent = "#16a34a" if down else "#dc2626"
+                bg, fg = ("#dcfce7", "#166534") if down else ("#fee2e2", "#991b1b")
+                pct_html = (f"&nbsp;<span style='background:{bg};color:{fg};border-radius:99px;"
+                            f"padding:1px 8px;font-size:12px;font-weight:700;white-space:nowrap'>"
+                            f"{'↓' if down else '↑'} {pct:+.1f}%</span>")
+            old_html = (f"<span style='text-decoration:line-through;color:#999'>{fmt_p(old_p)}</span>"
+                        f"&nbsp;→&nbsp;") if old_p else ""
+            size = r.get(COL_SIZE, "")
+            pm2 = r.get(COL_PRICE_PER_SQM, "")
+            if _num(pm2) is None and new_p and _num(size):
+                pm2 = new_p / _num(size)
+            details = " · ".join(t for t in (
+                fmt_s(size) if _num(size) else "",
+                fmt_m(pm2) if _num(pm2) else "",
+                _txt(r.get(COL_CONSTRUCTION, "")),
+            ) if t)
+            hist = _txt(r.get(COL_PRICE_HISTORY, ""))
+            site_hist = _txt(r.get(COL_SITE_PRICE_HISTORY, ""))
+            body = (
+                f"<div style='font-weight:700;color:#2563eb;text-decoration:underline;font-size:14px'>"
+                f"{_txt(r.get(COL_LOCATION, '')) or '—'}</div>"
+                f"<div style='margin-top:4px;font-size:13px'>{old_html}"
+                f"<strong style='font-size:16px;color:#222'>{fmt_p(new_p)}</strong>{pct_html}</div>"
+                + (f"<div style='font-size:12px;color:#666;margin-top:4px'>{details}</div>" if details else "")
+                + (f"<div style='font-size:11px;color:#999;margin-top:4px'>История: {hist}</div>" if hist else "")
+                + (f"<div style='font-size:11px;color:#999;margin-top:2px'>История (сайт): {site_hist}</div>" if site_hist else "")
+            )
+            box = (f"border:1px solid #eee;border-left:4px solid {accent};border-radius:8px;"
+                   f"padding:10px 12px;margin-bottom:10px;color:#333;text-decoration:none;display:block")
+            cards.append(f"<a href='{link}' target='_blank' style='{box}'>{body}</a>" if link
+                         else f"<div style='{box}'>{body}</div>")
+        return "".join(cards)
+
 
     new_section = changed_section = sold_section = ""
 
@@ -3244,12 +3301,7 @@ a{color:#4f9cf9;text-decoration:none}
             df_ch = df_ch.rename(columns={f'{COL_PRICE_PER_SQM}_new': COL_PRICE_PER_SQM})
         if COL_PRICE in df_ch.columns and COL_SIZE in df_ch.columns and COL_PRICE_PER_SQM not in df_ch.columns:
             df_ch[COL_PRICE_PER_SQM] = (df_ch[COL_PRICE] / df_ch[COL_SIZE]).round(2)
-        tbl = to_html_table(df_ch,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-                             COL_CONSTRUCTION, COL_PRICE_HISTORY,
-                             COL_SITE_PRICE_HISTORY],
-                            ["Локация", "Нова цена", "Площ", "€/m²", "Строителство",
-                             "История на цената", "История (сайт)"])
+        tbl = to_html_cards(df_ch)
         changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_sold_now.empty:
@@ -3282,11 +3334,7 @@ a{color:#4f9cf9;text-decoration:none}
             agency_sections += f"""<h3><span class="pill new">НОВИ · {name}</span> &nbsp;{len(res["new"])} обяви &mdash; {TODAY}</h3>{tbl}"""
             subject_parts.append(f"{len(res['new'])} НОВИ ({name})")
         if not res["changed"].empty:
-            tbl = to_html_table(res["changed"],
-                                [COL_LOCATION, 'Price_EUR_old', COL_PRICE, COL_SIZE,
-                                 COL_PRICE_PER_SQM, COL_PRICE_HISTORY],
-                                ["Локация", "Стара цена", "Нова цена", "Площ", "€/m²",
-                                 "История на цената"])
+            tbl = to_html_cards(res["changed"])
             agency_sections += f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА · {name}</span> &nbsp;{len(res["changed"])} обяви &mdash; {TODAY}</h3>{tbl}"""
             subject_parts.append(f"{len(res['changed'])} ПРОМЯНА ({name})")
         if not res["sold"].empty:
