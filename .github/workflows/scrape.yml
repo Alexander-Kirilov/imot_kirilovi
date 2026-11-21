@@ -106,8 +106,6 @@ jobs:
           YAVLENA_URL: ${{ secrets.YAVLENA_URL }}
           HOMES_URL: ${{ secrets.HOMES_URL }}
           IMOTINET_SEARCH: ${{ secrets.IMOTINET_SEARCH }}
-          # Bright Data прокси за imoti.net (блокира IP-тата на GitHub); празно = директно
-          IMOTINET_PROXY: ${{ secrets.IMOTINET_PROXY }}
           IRIDA_URL: ${{ secrets.IRIDA_URL }}
           # Еднократно възстановяване на изгубени данни (само при ръчно пускане с „repair“)
           REPAIR_HISTORY: ${{ inputs.repair && '1' || '' }}

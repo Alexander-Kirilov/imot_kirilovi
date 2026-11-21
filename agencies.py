@@ -14,11 +14,10 @@ import logging
 import os
 import random
 import re
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urljoin, urlsplit
 
 import pandas as pd
 import requests
@@ -656,47 +655,6 @@ def fetch_homes():
 IMOTINET_SEARCH = os.environ.get("IMOTINET_SEARCH", "")
 IMOTINET = "https://www.imoti.net"
 
-# От 04.11.2026 imoti.net връща 403 на IP-тата на GitHub Actions. Ако е зададен
-# IMOTINET_PROXY (Bright Data, напр. http://brd-customer-ID-zone-ZONA:ПАРОЛА@brd.superproxy.io:33335),
-# всички заявки към сайта (страници, детайли, снимки) минават през проксито.
-# Без него сайтът се тегли директно, както преди.
-IMOTINET_PROXY = os.environ.get("IMOTINET_PROXY", "").strip()
-BRD_CA = Path(__file__).with_name("certs") / "brightdata_proxy_ca.crt"
-
-
-def _mask_proxy(text):
-    """Скрива паролата на проксито от текст на грешка (отива в лога и в dashboard-а)."""
-    if not IMOTINET_PROXY:
-        return str(text)
-    secret = urlsplit(IMOTINET_PROXY).password or ""
-    return str(text).replace(secret, "***") if secret else str(text)
-
-
-def _ca_bundle():
-    """Стандартните CA + root-а на Bright Data (residential/unlocker зоните подменят сертификата)."""
-    import certifi
-    bundle = Path(tempfile.gettempdir()) / "imotinet_ca_bundle.pem"
-    if not bundle.exists():
-        bundle.write_text(Path(certifi.where()).read_text(encoding="utf-8") + "\n"
-                          + BRD_CA.read_text(encoding="utf-8"), encoding="utf-8")
-    return str(bundle)
-
-
-def _imotinet_session():
-    s = _session()
-    if not IMOTINET_PROXY:
-        return s
-    parts = urlsplit(IMOTINET_PROXY)
-    user = unquote(parts.username or "")
-    # Едно и също IP за целия run: бисквитката и sid-ът на търсенето са вързани към него
-    if user.startswith("brd-customer-") and "-session-" not in user:
-        user += f"-session-imot{random.randint(10**6, 10**7 - 1)}"
-    proxy = (f"{parts.scheme}://{quote(user, safe='')}:{quote(unquote(parts.password or ''), safe='')}"
-             f"@{parts.hostname}:{parts.port}")
-    s.proxies = {"http": proxy, "https": proxy}
-    s.verify = _ca_bundle()
-    return s
-
 
 def _imotinet_cards(html):
     soup = BeautifulSoup(html, "html.parser")
@@ -732,17 +690,7 @@ def _imotinet_cards(html):
 
 
 def fetch_imotinet():
-    try:
-        return _fetch_imotinet()
-    except Exception as err:
-        # Текстът на грешката може да съдържа адреса на проксито → без паролата
-        raise RuntimeError(_mask_proxy(err)) from None
-
-
-def _fetch_imotinet():
-    s = _imotinet_session()
-    if IMOTINET_PROXY:
-        logger.info("[imoti.net] През прокси (IMOTINET_PROXY)")
+    s = _session()
     _get(s, f"{IMOTINET}/bg/obiavi/r/prodava/sofia/")  # бисквитка за сесията
     fields = parse_qsl(IMOTINET_SEARCH, keep_blank_values=True)
     if not any(k == "items_per_page" for k, _ in fields):
@@ -781,7 +729,7 @@ def _fetch_imotinet():
             details += 1
             _pause()
         except Exception as det_err:
-            logger.warning(f"[imoti.net] Детайлът на {link} не се зареди: {_mask_proxy(det_err)}")
+            logger.warning(f"[imoti.net] Детайлът на {link} не се зареди: {det_err}")
     logger.info(f"[imoti.net] Детайли (само нови обяви): {details}")
     return list(by_link.values())
 
@@ -877,8 +825,7 @@ AGENCIES = [
     {"key": "homes", "name": "homes.bg", "site": "homes.bg", "url": HOMES_URL,
      "secret": "HOMES_URL", "fetch": fetch_homes},
     {"key": "imotinet", "name": "imoti.net", "site": "imoti.net", "url": IMOTINET_SEARCH and
-     f"{IMOTINET}/bg/obiavi/r/prodava/sofia/", "secret": "IMOTINET_SEARCH", "fetch": fetch_imotinet,
-     "session": _imotinet_session},
+     f"{IMOTINET}/bg/obiavi/r/prodava/sofia/", "secret": "IMOTINET_SEARCH", "fetch": fetch_imotinet},
     {"key": "irida", "name": "Ирида", "site": "irida.bg", "url": IRIDA_URL,
      "secret": "IRIDA_URL", "fetch": fetch_irida},
 ]
@@ -1010,8 +957,7 @@ def run_agency(agency, today, deadline=None):
         res["error"] = "времето за сайта изтече — списъкът е непълен, липсващите не са маркирани като свалени"
     df_all, new, changed, sold, bulk = update_history(agency, scraped, today, mark_sold=not partial)
     # Отпечатъци на снимките (само за обявите без тях) — за откриване на дубликати
-    df_all = duplicates.fill_image_hashes(df_all, COL_IMAGES,
-                                          duplicates.url_reader(agency.get("session", _session)()))
+    df_all = duplicates.fill_image_hashes(df_all, COL_IMAGES, duplicates.url_reader(_session()))
     res.update(df=df_all, new=new, changed=changed, sold=sold, fetched=len(scraped), bulk=bulk)
 
     AGENCY_DIR.mkdir(exist_ok=True)
