@@ -105,7 +105,6 @@ jobs:
           HOME2U_URL: ${{ secrets.HOME2U_URL }}
           YAVLENA_URL: ${{ secrets.YAVLENA_URL }}
           HOMES_URL: ${{ secrets.HOMES_URL }}
-          IMOTINET_SEARCH: ${{ secrets.IMOTINET_SEARCH }}
           IRIDA_URL: ${{ secrets.IRIDA_URL }}
           # Еднократно възстановяване на изгубени данни (само при ръчно пускане с „repair“)
           REPAIR_HISTORY: ${{ inputs.repair && '1' || '' }}
