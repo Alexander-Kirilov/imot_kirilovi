@@ -17,7 +17,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urljoin, urlsplit
 
 import pandas as pd
 import requests
@@ -337,45 +337,65 @@ HOME2U_ROOM_TYPES = ("3-стаен", "4-стаен", "многостаен")
 
 
 def _home2u_params(soup):
-    """{'Местоположение': 'Младост 1, София', 'Етаж': '2', …} от иконките в обявата."""
+    """{'Местоположение': 'Младост 1', 'Квадратура': '60 м2', 'Етаж': '1', 'Строителство': 'Панел', …}.
+    Дизайнът от ноември 2026: <li><p>Етаж <strong>1</strong></p></li> и
+    <li><span>Строителство</span><strong>Панел</strong></li>; локацията е "Младост 1 | София"."""
     params = {}
-    for li in soup.select("li"):
-        p = li.select_one("p")
-        if not p or not li.select_one("[class*='ico-']"):
+    for li in soup.select(".property-details li, .card-property__body li"):
+        strong = li.find("strong")
+        if not strong:
             continue
-        label, sep, value = p.get_text(" ", strip=True).partition(":")
-        if sep:
-            params.setdefault(label.strip(), value.strip())
+        value = strong.get_text("", strip=True)  # "60 м" + <sup>2</sup> → "60 м2"
+        label = li.get_text(" ", strip=True).replace(strong.get_text(" ", strip=True), "").strip(" :")
+        if label and value:
+            params.setdefault(label, value)
+    loc = soup.select_one(".section__content-location p, .card-property__body-meta p")
+    if loc:
+        params.setdefault("Местоположение", loc.get_text(" ", strip=True).split("|")[0].strip())
     return params
 
 
-def _home2u_card(article):
+def _home2u_card(card):
     """Данните от картата в списъка — резерва, ако детайлът не се зареди."""
-    text = re.sub(r'\s+', ' ', article.get_text(" | ", strip=True))
-    img = article.select_one("img")
-    m_price = re.search(r'€\s*([\d\s.,]+)|([\d\s.,]+)\s*€', text)
-    m_size = re.search(r'([\d.,]+)\s*м2', text)
+    params = _home2u_params(card)
+    price = card.select_one(".card-property__body-price > strong")
+    tags = card.select_one(".card-property__body-tags")
+    img = card.select_one("img")
     return {
-        COL_LOCATION: text.split("|")[0].strip(),
-        COL_PRICE: _price(m_price.group(0)) if m_price else None,
-        COL_SIZE: _area(m_size.group(1)) if m_size else None,
+        COL_LOCATION: params.get("Местоположение", ""),
+        COL_PRICE: _price(price.get_text(" ", strip=True)) if price else None,
+        COL_SIZE: _area(params.get("Квадратура")),
+        COL_FLOOR: _int(params.get("Етаж")),
+        COL_CONSTRUCTION: _construction_word(tags.get_text(" ", strip=True)) if tags else "",
         COL_IMAGES: (img.get("data-src") or img.get("src") or "") if img else "",
     }
+
+
+def _home2u_next_page(soup, page_url):
+    """Страниците са с JS бутони (data-page); същото дава ?properties_page=N в адреса."""
+    pages = [int(a["data-page"]) for a in soup.select(".js-pagination-link[data-page]")
+             if a["data-page"].isdigit()]
+    query = parse_qsl(urlsplit(page_url).query, keep_blank_values=True)
+    current = int(dict(query).get("properties_page", "1") or 1)
+    if not pages or current >= max(pages):
+        return None
+    query = [(k, v) for k, v in query if k != "properties_page"] + [("properties_page", str(current + 1))]
+    return urlsplit(page_url)._replace(query=urlencode(query)).geturl()
 
 
 def fetch_home2u():
     s = _session()
     queue, pages_seen, page_url = [], set(), HOME2U_URL
-    while page_url and page_url not in pages_seen and len(pages_seen) < 20 \
-            and not _time_up(partial=True):
+    while page_url and page_url not in pages_seen and len(pages_seen) < 20             and not _time_up(partial=True):
         pages_seen.add(page_url)
         soup = _soup(s, page_url)
-        for art in soup.select("article.article-catalog"):
-            a = art.select_one(".article-catalog__body-title a[href]")
+        for card in soup.select(".card-property"):
+            a = card.select_one(".card-property__body-foot a[href]") or card.select_one("a[href*='/property/']")
             if a:
-                queue.append((urljoin(page_url, a["href"].strip()), _home2u_card(art)))
-        nxt = soup.select_one("a.next[href], link[rel='next']")
-        page_url = urljoin(page_url, nxt["href"]) if nxt else None
+                queue.append((urljoin(page_url, a["href"].strip()), _home2u_card(card)))
+        page_url = _home2u_next_page(soup, page_url)
+        if page_url:
+            _pause()
     logger.info(f"[Home2U] Обяви в списъка: {len(queue)}")
 
     result, visited = [], set()
@@ -429,16 +449,17 @@ def fetch_home2u():
 
         params = _home2u_params(soup)
         h1 = soup.select_one("h1")
-        price_el = soup.select_one(".section__head-price h2") or soup.select_one("[class*='price']")
+        price_el = soup.select_one(".property-details__price strong") or soup.select_one("[class*='price']")
         og_img = soup.find("meta", property="og:image")
         row = _listing(url, **{
             COL_TITLE: pre.get(COL_TITLE) or (h1.get_text(" ", strip=True) if h1 else ""),
             COL_LOCATION: params.get("Местоположение") or pre.get(COL_LOCATION, ""),
             COL_PRICE: (_price(price_el.get_text(" ", strip=True)) if price_el else None)
                        or pre.get(COL_PRICE),
-            COL_SIZE: _area(params.get("Площ в квадратни метри")) or pre.get(COL_SIZE),
+            COL_SIZE: _area(params.get("Квадратура")) or pre.get(COL_SIZE),
             COL_FLOOR: _int(params.get("Етаж")) if params.get("Етаж") else pre.get(COL_FLOOR),
-            COL_CONSTRUCTION: params.get("Строителство", ""),
+            COL_CONSTRUCTION: (_construction_word(params.get("Строителство", ""))
+                               or params.get("Строителство", "") or pre.get(COL_CONSTRUCTION, "")),
             COL_IMAGES: (og_img.get("content") if og_img else "") or pre.get(COL_IMAGES, ""),
         })
         logger.info(f"[Home2U] {row[COL_LOCATION]} · {row[COL_PRICE] or '—'} € · "
