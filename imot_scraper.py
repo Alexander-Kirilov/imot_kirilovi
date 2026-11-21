@@ -1495,6 +1495,179 @@ def _combine_sites(df_imot, agency_results):
     return duplicates.annotate(df, COL_AD_CREATED)
 
 
+# Визия на dashboard-а: само CSS слой върху стила в generate_html. Не сменя HTML-а и JS-а,
+# затова табовете, филтрите, търсенето и сортирането работят както преди. На телефон
+# редовете стават карти (без плъзгане настрани), а акцентът поема цвета на избрания сайт.
+LOOK_V2_CSS = """<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style id="look-v2">
+  /* ── Визия v2: само CSS. HTML и JS не са пипани → табове, филтри, сортиране работят както преди ── */
+  :root {
+    --bg:      #12151f;   /* нощно небе над Младост */
+    --surface: #1a1f2d;
+    --raised:  #232a3b;
+    --border:  #2d3447;
+    --text:    #ece8e0;   /* топло бяло, не синкаво */
+    --muted:   #9ba1b6;
+    --lamp:    #f2b45a;   /* улична лампа: акцент за „Всички“ */
+    --accent:  var(--lamp);
+    --green:   #5fd39a;
+    --orange:  #f2b45a;
+    --red:     #ff7d7d;
+    --sans:    'Onest', system-ui, sans-serif;
+    --mono:    'Onest', system-ui, sans-serif;
+  }
+  /* Целият интерфейс поема цвета на избрания сайт */
+  body:has(.site-btn-imot.active)     { --accent: #6aa8ff; }
+  body:has(.site-btn-era.active)      { --accent: #fb7185; }
+  body:has(.site-btn-home2u.active)   { --accent: #5fd39a; }
+  body:has(.site-btn-yavlena.active)  { --accent: #f2b45a; }
+  body:has(.site-btn-homes.active)    { --accent: #b49bff; }
+  body:has(.site-btn-imotinet.active) { --accent: #4fd8ee; }
+  body:has(.site-btn-irida.active)    { --accent: #f58cc4; }
+
+  body { font-family: var(--sans); font-variant-numeric: tabular-nums; background: var(--bg); color: var(--text); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Заглавие ── */
+  header { padding: 26px 32px 18px; border-bottom: none; }
+  header h1 { font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  header h1 span { color: var(--text); font-weight: 500; opacity: .75; }
+  .updated { font-family: var(--sans); font-size: 13px; }
+
+  /* ── Числата горе: компактни, с цветна черта отдолу вместо цветни цифри ── */
+  .stats { gap: 12px; background: transparent; border: none; padding: 0 32px 20px; }
+  .stat { background: var(--surface); border-radius: 12px; text-align: left; padding: 14px 18px;
+          border-bottom: 3px solid var(--border); }
+  .stat:nth-child(2) { border-bottom-color: var(--green); }
+  .stat:nth-child(3) { border-bottom-color: var(--orange); }
+  .stat:nth-child(4) { border-bottom-color: var(--red); }
+  .stat-num, .stat-num.green, .stat-num.orange, .stat-num.red { color: var(--text); font-family: var(--sans); font-size: 30px; font-weight: 700; }
+  .stat-label { text-transform: none; letter-spacing: 0; font-size: 13px; margin-top: 6px; }
+
+  /* ── Сайтове ── */
+  nav.site-nav { background: transparent; border: none; padding: 0 32px 14px; }
+  .site-nav-label { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; }
+  nav.site-nav a.site-btn { background: var(--surface); border-color: transparent; border-radius: 99px; padding: 7px 16px; font-weight: 600; }
+  nav.site-nav a.site-btn-all { --site: var(--lamp); }
+  nav.site-nav a.site-btn-imot { --site: #6aa8ff; }
+  nav.site-nav a.site-btn.active { box-shadow: none; background: color-mix(in srgb, var(--site) 18%, var(--surface)); }
+  nav .badge { font-family: var(--sans); background: rgba(255,255,255,.07); }
+
+  /* ── Табове „Всички активни / Нови / Промени / Продадени“: сегментиран бутон ── */
+  nav.view-nav { margin: 0 32px; padding: 4px; gap: 4px; border: none; background: var(--surface);
+                 border-radius: 12px; width: fit-content; max-width: calc(100% - 64px); }
+  nav.view-nav a { border: none; border-radius: 9px; padding: 9px 18px; font-size: 14px; color: var(--muted); }
+  nav.view-nav a:hover { color: var(--text); background: var(--raised); }
+  nav.view-nav a.active { color: var(--bg); background: var(--accent); }
+  nav.view-nav a.active .badge { color: var(--bg); background: rgba(0,0,0,.14); }
+
+  .site-info { border: none; padding: 12px 32px 0; font-size: 13px; }
+
+  /* ── Филтри ── */
+  .filter-bar { margin: 14px 32px 0; border: none; border-radius: 12px; padding: 12px 16px; gap: 12px 18px; }
+  .filter-label { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; }
+  .filter-bar select, .filter-bar input[type=number], .ms summary, .search-wrap input {
+    background: var(--bg); border-color: var(--border); border-radius: 8px; font-family: var(--sans); font-size: 14px; }
+  .ms-panel { background: var(--raised); border-radius: 10px; }
+  .ms-panel label:hover { background: var(--surface); }
+  .filter-reset { border-radius: 8px; font-family: var(--sans); }
+  .filter-active-count { font-family: var(--sans); font-size: 13px; font-weight: 600; }
+
+  /* ── Секции ── */
+  main { padding: 0 32px 48px; }
+  section { padding-top: 28px; }
+  section h2 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+  section h2 .badge { font-family: var(--sans); font-size: 13px; background: var(--surface); }
+  .section-desc { font-size: 13px; max-width: 72ch; }
+
+  /* ── Таблица (компютър) ── */
+  .table-wrap { border: none; border-radius: 12px; background: var(--surface); }
+  table.data-table { font-size: 14px; }
+  table.data-table th { background: var(--surface); text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; padding: 12px 14px; }
+  table.data-table th.sorted-asc, table.data-table th.sorted-desc { color: var(--accent); }
+  table.data-table td { border-bottom-color: var(--border); padding: 12px 14px; }
+  table.data-table tr:hover td { background: var(--raised); }
+  /* цветна черта отляво = от кой сайт е обявата */
+  table.data-table tbody tr td:first-child { box-shadow: inset 4px 0 0 var(--row-site, #6aa8ff); }
+  tr[data-src="era"]     { --row-site: #fb7185; }
+  tr[data-src="home2u"]  { --row-site: #5fd39a; }
+  tr[data-src="yavlena"] { --row-site: #f2b45a; }
+  tr[data-src="homes"]   { --row-site: #b49bff; }
+  tr[data-src="imotinet"]{ --row-site: #4fd8ee; }
+  tr[data-src="irida"]   { --row-site: #f58cc4; }
+  /* цената е най-важното в реда */
+  table.data-table td:nth-child(4) { font-size: 16px; font-weight: 700; color: var(--text); }
+  table.data-table td:nth-child(3) { font-weight: 600; white-space: nowrap; }
+  /* снимките: по-големи, една до друга */
+  table.data-table td:first-child { white-space: nowrap; }
+  table.data-table td img { width: 96px !important; height: 72px !important; border-radius: 8px !important; border: none; }
+  .history { font-family: var(--sans); font-size: 12px; color: #b9bdd0; line-height: 1.5; }
+  .site-history { color: #8fd0f5; }
+  .constr { background: rgba(255,255,255,.07); color: var(--text); font-size: 12px; }
+  .src { font-size: 12px; }
+  table.data-table a { color: var(--accent); }
+  footer { border: none; }
+
+  /* ── Телефон: всеки ред става карта; нищо не се плъзга настрани ── */
+  @media (max-width: 640px) {
+    header { padding: 18px 16px 12px; }
+    header h1 { font-size: 21px; }
+    .stats { padding: 0 16px 14px; gap: 8px; }
+    .stat { padding: 10px 12px; flex: 1 1 calc(50% - 8px); }
+    .stat-num, .stat-num.green, .stat-num.orange, .stat-num.red { font-size: 22px; }
+    nav.site-nav { padding: 0 16px 10px; }
+    /* четирите таба се побират на един ред, без плъзгане настрани */
+    nav.view-nav { margin: 0 16px; max-width: none; width: auto; display: grid; grid-template-columns: repeat(4, 1fr); overflow: visible; }
+    nav.view-nav a { padding: 7px 2px; font-size: 12px; text-align: center; white-space: normal; line-height: 1.3; }
+    nav.view-nav a .badge { display: block; width: fit-content; margin: 3px auto 0; }
+    .site-info { padding: 10px 16px 0; }
+    .filter-bar { margin: 12px 16px 0; }
+    main { padding: 0 16px 32px; }
+
+    .table-wrap { overflow: visible; background: transparent; }
+    table.data-table, table.data-table tbody { display: block; }
+    /* заглавията стават бутони за сортиране */
+    table.data-table thead { display: block; position: static; margin-bottom: 10px; }
+    table.data-table thead tr { display: flex; flex-wrap: wrap; gap: 6px; }
+    table.data-table thead tr::before { content: 'Подреди по:'; color: var(--muted); font-size: 13px; align-self: center; margin-right: 2px; }
+    table.data-table th { background: var(--surface); border: none; border-radius: 99px; padding: 5px 12px; font-size: 12px; }
+    table.data-table th:first-child, table.data-table th:last-child { display: none; }
+    main.one-site table.data-table th.col-src { display: none; }
+
+    table.data-table tbody tr { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px;
+      background: var(--surface); border-radius: 14px; padding: 12px; margin-bottom: 12px;
+      border-left: 4px solid var(--row-site, #6aa8ff); }
+    table.data-table tbody tr:hover td { background: transparent; }
+    table.data-table td { display: block; padding: 0; border: none; max-width: none; text-align: left; box-shadow: none !important; }
+    table.data-table td:first-child { grid-column: 1 / -1; display: flex; gap: 6px; overflow: hidden; }
+    table.data-table td img { flex: 1 1 0; min-width: 0; width: 100% !important; height: 120px !important; margin: 0 !important; }
+    table.data-table td:nth-child(2) { grid-column: 3; grid-row: 2; text-align: right; }
+    table.data-table td:nth-child(3) { grid-column: 1 / 3; grid-row: 2; font-size: 16px; }
+    table.data-table td:nth-child(4) { grid-column: 1 / -1; font-size: 22px; }
+    main.one-site table.data-table td:nth-child(3) { grid-column: 1 / -1; }
+    .dup-badges { align-items: flex-start; }
+    /* малки надписи над стойностите */
+    table.data-table td:nth-child(n+5)::before { display: block; font-size: 11px; color: var(--muted); font-weight: 500; }
+    #all-table td:nth-child(5)::before, #recent-table td:nth-child(5)::before, #changed-table td:nth-child(5)::before, #sold-table td:nth-child(5)::before { content: 'Площ'; }
+    #all-table td:nth-child(6)::before, #recent-table td:nth-child(6)::before, #changed-table td:nth-child(6)::before, #sold-table td:nth-child(6)::before { content: '€/m²'; }
+    #all-table td:nth-child(7)::before, #recent-table td:nth-child(7)::before, #changed-table td:nth-child(7)::before { content: 'Етаж'; }
+    #all-table td:nth-child(8)::before, #recent-table td:nth-child(8)::before, #changed-table td:nth-child(8)::before { content: 'Година'; }
+    #all-table td:nth-child(9)::before, #recent-table td:nth-child(9)::before, #changed-table td:nth-child(9)::before, #sold-table td:nth-child(7)::before { content: 'Строителство'; }
+    #all-table td:nth-child(10)::before, #recent-table td:nth-child(10)::before, #changed-table td:nth-child(10)::before { content: 'Добавена'; }
+    #sold-table td:nth-child(8)::before { content: 'Последно виждана'; }
+    table.data-table td.col-hist { grid-column: 1 / -1; }
+    table.data-table td.col-hist::before { content: 'История на цената'; }
+    table.data-table td:last-child { grid-column: 1 / -1; }
+    table.data-table td:last-child::before { content: none !important; }
+    table.data-table td:last-child a { display: block; text-align: center; padding: 9px; border-radius: 10px; background: var(--raised); }
+    table.data-table td:nth-child(10) br { display: none; }
+    table.data-table td:nth-child(10) .age { margin-left: 4px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+"""
+
+
 def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
     # Всички сайтове в едни и същи таблици; табовете по сайт филтрират редовете
     df_input = _combine_sites(df_input, agency_results)
@@ -2202,6 +2375,7 @@ def generate_html(df_input: pd.DataFrame, now_str: str, agency_results=None):
     .stat-num {{ font-size: 22px; }}
   }}
 </style>
+{LOOK_V2_CSS}
 </head>
 <body>
 
@@ -3155,76 +3329,17 @@ body{font-family:Arial,sans-serif;line-height:1.6;color:#333;background:#f9f9f9}
 .hdr p{font-size:12px;color:#7a7d9a;margin:4px 0 0}
 .body{padding:24px 28px}
 h3{color:#444;font-size:14px;margin:24px 0 8px;border-bottom:2px solid #f0f0f0;padding-bottom:6px}
-.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
-.scroll-hint{font-size:11px;color:#aaa;margin-bottom:4px;display:none}
-.imot-table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px}
-.imot-table th{background:#f5f5f5;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#666;padding:8px 12px;text-align:left;border-bottom:2px solid #e0e0e0;white-space:nowrap}
-.imot-table td{padding:9px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
-.imot-table tr:hover td{background:#fafafa}
 a{color:#4f9cf9;text-decoration:none}
 .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
 .pill.new{background:#dcfce7;color:#166534}
 .pill.chg{background:#fef3c7;color:#92400e}
 .pill.sld{background:#fee2e2;color:#991b1b}
-.sold-table td{color:#999;text-decoration:line-through}
 .ftr{background:#f5f5f5;padding:12px 28px;font-size:12px;color:#999;text-align:center;border-radius:0 0 8px 8px}
 @media screen and (max-width:600px){
   .body{padding:16px}
-  .scroll-hint{display:block}
-  .imot-table{font-size:12px}
-  .imot-table td,.imot-table th{padding:7px 8px}
-  .col-history{display:none}
 }
 </style>"""
 
-
-    # Целият ред е линк към обявата: всяка клетка е обвита в <a> (имейл клиентите
-    # не пускат JS, а <tr> не може да е линк). Локацията е оцветена като линк,
-    # за да личи, че редът се цъка; останалите клетки пазят цвета си.
-    ROW_LINK_STYLE = "color:inherit;text-decoration:none;display:block"
-    LOC_LINK_STYLE = "color:#2563eb;text-decoration:underline;font-weight:600;display:block;white-space:nowrap"
-
-    def to_html_table(df_in, cols, headers, extra_class=""):
-        tbl_head = "<tr>" + "".join(
-            f"<th class='col-history'>{h}</th>" if h in ("История (сайт)", "История на цената")
-            else f"<th>{h}</th>"
-            for h in headers
-        ) + "</tr>"
-        tbl_rows = []
-        for _, email_row in df_in.iterrows():
-            link = email_row.get(COL_LINK, "")
-            link = link if isinstance(link, str) and link.startswith("http") else ""
-            cells = []
-            for col_name, h in zip(cols, headers):
-                v = email_row.get(col_name, "")
-                is_history = h in ("История (сайт)", "История на цената")
-                td_attr = " class='col-history'" if is_history else ""
-                if col_name == COL_PRICE:
-                    content = fmt_p(v)
-                elif col_name == COL_SIZE:
-                    content = fmt_s(v)
-                elif col_name == COL_PRICE_PER_SQM:
-                    content = fmt_m(v)
-                elif col_name == 'Price_EUR_old':
-                    td_attr = " style='text-decoration:line-through;color:#999'"
-                    content = fmt_p(v)
-                elif col_name == COL_FIRST_SEEN:
-                    d = str(v).strip() if pd.notna(v) else ""
-                    age_txt = fmt_age(days_since(d))
-                    content = (
-                        f"{d or '—'}<br>"
-                        f"<span style='color:#999;font-size:11px'>{age_txt}</span>"
-                    )
-                else:
-                    content = v if pd.notna(v) and v != '' else '—'
-                if link:
-                    a_style = LOC_LINK_STYLE if col_name == COL_LOCATION else ROW_LINK_STYLE
-                    content = f"<a href='{link}' target='_blank' style='{a_style}'>{content}</a>"
-                cells.append(f"<td{td_attr}>{content}</td>")
-            tbl_rows.append("<tr>" + "".join(cells) + "</tr>")
-        cls = f"imot-table {extra_class}".strip()
-        hint = "<div class='scroll-hint'>← плъзни за повече →</div>"
-        return f"{hint}<div class='tbl-scroll'><table class='{cls}'><thead>{tbl_head}</thead><tbody>{''.join(tbl_rows)}</tbody></table></div>"
 
     def _num(x):
         try:
@@ -3236,27 +3351,44 @@ a{color:#4f9cf9;text-decoration:none}
     def _txt(x):
         return str(x).strip() if pd.notna(x) and str(x).strip() not in ("", "nan") else ""
 
-    def to_html_cards(df_in):
-        """Промените в цена като карти в една колона: на телефона не се плъзга
-        настрани (жестът "назад" на Android) и нищо не се скрива. Стара → нова
-        цена и % се виждат веднага. Всичко е с inline стилове заради Gmail."""
+    def to_html_cards(df_in, kind="changed"):
+        """Обявите като карти в една колона: на телефона не се плъзга настрани
+        (жестът "назад" на Android) и нищо не се скрива. kind: changed / new / sold.
+        Всичко е с inline стилове заради Gmail."""
+        def pill(text, bg, fg):
+            return (f"&nbsp;<span style='background:{bg};color:{fg};border-radius:99px;"
+                    f"padding:1px 8px;font-size:12px;font-weight:700;white-space:nowrap'>{text}</span>")
         cards = []
         for _, r in df_in.iterrows():
             link = r.get(COL_LINK, "")
             link = link if isinstance(link, str) and link.startswith("http") else ""
-            old_p, new_p = _num(r.get('Price_EUR_old')), _num(r.get(COL_PRICE))
-            pct_html = ""
-            accent = "#d97706"
-            if old_p and new_p:
-                pct = (new_p - old_p) / old_p * 100
-                down = pct < 0
-                accent = "#16a34a" if down else "#dc2626"
-                bg, fg = ("#dcfce7", "#166534") if down else ("#fee2e2", "#991b1b")
-                pct_html = (f"&nbsp;<span style='background:{bg};color:{fg};border-radius:99px;"
-                            f"padding:1px 8px;font-size:12px;font-weight:700;white-space:nowrap'>"
-                            f"{'↓' if down else '↑'} {pct:+.1f}%</span>")
-            old_html = (f"<span style='text-decoration:line-through;color:#999'>{fmt_p(old_p)}</span>"
-                        f"&nbsp;→&nbsp;") if old_p else ""
+            new_p = _num(r.get(COL_PRICE))
+            # imot.bg: истинската дата на публикуване е в номера на обявата
+            added = duplicates.imot_created_date(link) or _txt(r.get(COL_FIRST_SEEN, ""))[:10]
+            age = days_since(added)
+            accent, loc_color, card_bg, badge, old_html, note = "#2563eb", "#2563eb", "#fff", "", "", ""
+            price_html = f"<strong style='font-size:16px;color:#222'>{fmt_p(new_p)}</strong>"
+            if kind == "changed":
+                old_p = _num(r.get('Price_EUR_old'))
+                accent = "#d97706"
+                if old_p and new_p:
+                    pct = (new_p - old_p) / old_p * 100
+                    down = pct < 0
+                    accent = "#16a34a" if down else "#dc2626"
+                    badge = pill(f"{'↓' if down else '↑'} {pct:+.1f}%",
+                                 *(("#dcfce7", "#166534") if down else ("#fee2e2", "#991b1b")))
+                if old_p:
+                    old_html = (f"<span style='text-decoration:line-through;color:#999'>{fmt_p(old_p)}</span>"
+                                f"&nbsp;→&nbsp;")
+            elif kind == "new":
+                when = "" if age is None else (" · днес" if age == 0 else f" · преди {fmt_age(age)}")
+                badge = pill(f"нова{when}", "#dcfce7", "#166534")
+                note = f"Добавена: {added}" if added else ""
+            elif kind == "sold":
+                accent, loc_color, card_bg = "#d1d5db", "#6b7280", "#fafafa"
+                price_html = f"<span style='font-size:15px;color:#888;text-decoration:line-through'>{fmt_p(new_p)}</span>"
+                badge = pill("свалена", "#fee2e2", "#991b1b")
+                note = f"Беше обявена {fmt_age(age)}" if age is not None else ""
             size = r.get(COL_SIZE, "")
             pm2 = r.get(COL_PRICE_PER_SQM, "")
             if _num(pm2) is None and new_p and _num(size):
@@ -3266,18 +3398,22 @@ a{color:#4f9cf9;text-decoration:none}
                 fmt_m(pm2) if _num(pm2) else "",
                 _txt(r.get(COL_CONSTRUCTION, "")),
             ) if t)
+            # История само ако има реална промяна (единична цена не е история)
             hist = _txt(r.get(COL_PRICE_HISTORY, ""))
+            hist = hist if " → " in hist else ""
             site_hist = _txt(r.get(COL_SITE_PRICE_HISTORY, ""))
+            site_hist = "" if site_hist == "—" else site_hist
+            small = "font-size:11px;color:#999;margin-top:3px"
             body = (
-                f"<div style='font-weight:700;color:#2563eb;text-decoration:underline;font-size:14px'>"
+                f"<div style='font-weight:700;color:{loc_color};text-decoration:underline;font-size:14px'>"
                 f"{_txt(r.get(COL_LOCATION, '')) or '—'}</div>"
-                f"<div style='margin-top:4px;font-size:13px'>{old_html}"
-                f"<strong style='font-size:16px;color:#222'>{fmt_p(new_p)}</strong>{pct_html}</div>"
+                f"<div style='margin-top:4px;font-size:13px'>{old_html}{price_html}{badge}</div>"
                 + (f"<div style='font-size:12px;color:#666;margin-top:4px'>{details}</div>" if details else "")
-                + (f"<div style='font-size:11px;color:#999;margin-top:4px'>История: {hist}</div>" if hist else "")
-                + (f"<div style='font-size:11px;color:#999;margin-top:2px'>История (сайт): {site_hist}</div>" if site_hist else "")
+                + (f"<div style='{small}'>{note}</div>" if note else "")
+                + (f"<div style='{small}'>История: {hist}</div>" if hist else "")
+                + (f"<div style='{small}'>История (сайт): {site_hist}</div>" if site_hist else "")
             )
-            box = (f"border:1px solid #eee;border-left:4px solid {accent};border-radius:8px;"
+            box = (f"background:{card_bg};border:1px solid #eee;border-left:4px solid {accent};border-radius:8px;"
                    f"padding:10px 12px;margin-bottom:10px;color:#333;text-decoration:none;display:block")
             cards.append(f"<a href='{link}' target='_blank' style='{box}'>{body}</a>" if link
                          else f"<div style='{box}'>{body}</div>")
@@ -3287,12 +3423,7 @@ a{color:#4f9cf9;text-decoration:none}
     new_section = changed_section = sold_section = ""
 
     if not df_new_only.empty:
-        tbl = to_html_table(df_new_only,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-                             COL_CONSTRUCTION, COL_FIRST_SEEN,
-                             COL_SITE_PRICE_HISTORY],
-                            ["Локация", "Цена", "Площ", "€/m²", "Строителство",
-                             "Добавена", "История (сайт)"])
+        tbl = to_html_cards(df_new_only, "new")
         new_section = f"""<h3><span class="pill new">НОВИ</span> &nbsp;{len(df_new_only)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_changed.empty:
@@ -3305,12 +3436,7 @@ a{color:#4f9cf9;text-decoration:none}
         changed_section = f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА</span> &nbsp;{len(df_changed)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     if not df_sold_now.empty:
-        tbl = to_html_table(df_sold_now,
-                            [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-                             COL_CONSTRUCTION, COL_SITE_PRICE_HISTORY],
-                            ["Локация", "Последна цена", "Площ", "€/m²",
-                             "Строителство", "История (сайт)"],
-                            extra_class="sold-table")
+        tbl = to_html_cards(df_sold_now, "sold")
         sold_section = f"""<h3><span class="pill sld">ПРОДАДЕНИ</span> &nbsp;{len(df_sold_now)} обяви &mdash; {TODAY}</h3>{tbl}"""
 
     subject_parts = []
@@ -3327,10 +3453,7 @@ a{color:#4f9cf9;text-decoration:none}
         name = res["name"]
         # Първоначалното зареждане (първи run / сменен филтър) не е "нови обяви"
         if not res["new"].empty and not res["bulk"]:
-            tbl = to_html_table(res["new"],
-                                [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-                                 COL_CONSTRUCTION, COL_FIRST_SEEN],
-                                ["Локация", "Цена", "Площ", "€/m²", "Строителство", "Добавена"])
+            tbl = to_html_cards(res["new"], "new")
             agency_sections += f"""<h3><span class="pill new">НОВИ · {name}</span> &nbsp;{len(res["new"])} обяви &mdash; {TODAY}</h3>{tbl}"""
             subject_parts.append(f"{len(res['new'])} НОВИ ({name})")
         if not res["changed"].empty:
@@ -3338,11 +3461,7 @@ a{color:#4f9cf9;text-decoration:none}
             agency_sections += f"""<h3><span class="pill chg">ПРОМЯНА В ЦЕНА · {name}</span> &nbsp;{len(res["changed"])} обяви &mdash; {TODAY}</h3>{tbl}"""
             subject_parts.append(f"{len(res['changed'])} ПРОМЯНА ({name})")
         if not res["sold"].empty:
-            tbl = to_html_table(res["sold"],
-                                [COL_LOCATION, COL_PRICE, COL_SIZE, COL_PRICE_PER_SQM,
-                                 COL_CONSTRUCTION],
-                                ["Локация", "Последна цена", "Площ", "€/m²", "Строителство"],
-                                extra_class="sold-table")
+            tbl = to_html_cards(res["sold"], "sold")
             agency_sections += f"""<h3><span class="pill sld">ПРОДАДЕНИ · {name}</span> &nbsp;{len(res["sold"])} обяви &mdash; {TODAY}</h3>{tbl}"""
             subject_parts.append(f"{len(res['sold'])} ПРОДАДЕНИ ({name})")
 
@@ -3356,7 +3475,7 @@ a{color:#4f9cf9;text-decoration:none}
   </div>
   <div class="body">
     {new_section}{changed_section}{sold_section}{agency_sections}
-    <p style="margin-top:8px;font-size:12px;color:#999">👆 Цъкни върху ред, за да отвориш обявата.</p>
+    <p style="margin-top:8px;font-size:12px;color:#999">👆 Цъкни върху карта, за да отвориш обявата.</p>
     <p style="margin-top:24px;font-size:13px;color:#666">
       Общо уникални обяви в базата: <strong>{len(df_all)}</strong><br>
       Пълният списък е прикачен като Excel.
